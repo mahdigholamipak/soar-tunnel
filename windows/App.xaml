@@ -1,0 +1,21 @@
+<Application x:Class="SoarClient.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <!-- Dark Theme Tokens -->
+        <Color x:Key="BgDark">#0F141C</Color>
+        <Color x:Key="SurfaceDark">#161D28</Color>
+        <Color x:Key="BorderDark">#263346</Color>
+        <Color x:Key="AccentCyan">#0EA5E9</Color>
+        <Color x:Key="AccentGreen">#10B981</Color>
+        <Color x:Key="AccentRed">#EF4444</Color>
+        <Color x:Key="TextLight">#F1F5F9</Color>
+        <Color x:Key="TextMuted">#94A3B8</Color>
+        <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgDark}" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceDark}" />
+        <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderDark}" />
+        <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextLight}" />
+        <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource TextMuted}" />
+    </Application.Resources>
+</Application>

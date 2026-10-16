@@ -1,0 +1,63 @@
+# ==============================================================================
+# Soar DNS Tunnel Client Configuration (Sample)
+# کانفیگ نمونه کلاینت تونل دی‌ان‌اس Soar
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1) Tunnel Identity & Security (هویت تونل و کلید رمزنگاری)
+# ------------------------------------------------------------------------------
+
+# Tunnel domains delegated to your Soar server via Cloudflare NS records.
+# You can specify multiple domains for automatic failover and racing!
+# دامنه‌های تونل که به سرور شما متصل هستند. می‌توانید چند دامنه برای جابجایی خودکار در صورت فیلتر شدن وارد کنید.
+DOMAINS = [
+    "s.yourdomain1.com",
+    "s.yourdomain2.org"
+]
+
+# Server Ed25519 Public Key (Base64)
+# Get this from your VPS after running the installer (or `soar-server pubkey /etc/soar/server.key`)
+# کلید عمومی سرور که در زمان نصب به شما نمایش داده می‌شود.
+SERVER_PUBLIC_KEY = "PASTE_YOUR_SERVER_PUBLIC_KEY_HERE="
+
+# ------------------------------------------------------------------------------
+# 2) Local Proxy Listener (پروکسی محلی)
+# ------------------------------------------------------------------------------
+
+# Local IP to bind the SOCKS5 proxy.
+# Use 127.0.0.1 for local device only, or 0.0.0.0 to share with your local network.
+LISTEN_IP = "127.0.0.1"
+
+# Local SOCKS5 port. Default: 10850
+LISTEN_PORT = 10850
+
+# ------------------------------------------------------------------------------
+# 3) DNS Resolvers & Discovery (ریزالورها و جستجوی مسیر)
+# ------------------------------------------------------------------------------
+
+# Path to the resolvers file containing high-performance candidate DNS resolvers.
+# مسیر فایل ریزالورهای کلاینت
+RESOLVERS_FILE = "client_resolvers.txt"
+
+# Country code for built-in resolver discovery (e.g. IR, RU, CN).
+COUNTRY = "IR"
+
+# ------------------------------------------------------------------------------
+# 4) Reliability & Timeouts (پایداری و مدیریت تایم‌اوت)
+# ------------------------------------------------------------------------------
+
+# Maximum time (in seconds) to wait for an inactive stream before reclaiming it.
+# Prevents connection leaks and hanging streams when apps go idle.
+# حداکثر زمان تایم‌اوت اتصالات غیرفعال (به ثانیه) جهت جلوگیری از نشت حافظه
+STREAM_IDLE_TIMEOUT_SECONDS = 60.0
+
+# Timeout (in seconds) for dialing a target before trying the next domain in failover.
+# تایم‌اوت برقراری اولیه ارتباط
+DIAL_TIMEOUT_SECONDS = 12.0
+
+# ------------------------------------------------------------------------------
+# 5) Logging (سطح لاگ)
+# ------------------------------------------------------------------------------
+
+# Log verbosity: "INFO", "DEBUG", "WARN", "ERROR"
+LOG_LEVEL = "INFO"

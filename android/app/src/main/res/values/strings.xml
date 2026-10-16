@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Soar DNS Tunnel</string>
+    <string name="server_key">Server Public Key</string>
+    <string name="tunnel_domains">Tunnel Domains (comma-separated)</string>
+    <string name="socks_port">SOCKS5 Port</string>
+    <string name="connect">CONNECT</string>
+    <string name="disconnect">DISCONNECT</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="copy_socks">Copy SOCKS5 Link</string>
+    <string name="open_telegram">Set in Telegram</string>
+    <string name="clear_logs">Clear Logs</string>
+    <string name="notification_title">Soar DNS Tunnel Active</string>
+    <string name="notification_text">SOCKS5 Proxy listening on 127.0.0.1:%1$d</string>
+</resources>

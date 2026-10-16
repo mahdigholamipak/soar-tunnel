@@ -1,0 +1,37 @@
+# Binaries & Build Output
+bin/
+obj/
+dist/
+dist-apk/
+build_win/
+*.exe
+*.dll
+*.so
+/soar-server
+/soar-client
+/server.key
+
+# Visual Studio & IDEs
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Android & Gradle
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/soar-client*
+
+# Go temporary files
+*.test
+*.prof
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
