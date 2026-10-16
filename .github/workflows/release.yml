@@ -40,15 +40,15 @@ jobs:
       - name: Build Android Binaries
         run: |
           mkdir -p dist/android-assets
-          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm64 ./cmd/soar-client
-          CGO_ENABLED=0 GOOS=android GOARCH=arm go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm ./cmd/soar-client
-          CGO_ENABLED=0 GOOS=android GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-amd64 ./cmd/soar-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm64 ./cmd/soar-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm ./cmd/soar-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-amd64 ./cmd/soar-client
 
       - name: Upload Core Binaries
         uses: actions/upload-artifact@v4
         with:
           name: core-binaries
-          path: dist/*
+          path: dist
 
   build-windows:
     name: Build Windows GUI Client
@@ -158,7 +158,7 @@ jobs:
           rm -rf android-assets
           cp ../scripts/install.sh ./install.sh
           chmod +x install.sh
-          sha256sum * > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
           ls -la
 
       - name: Create GitHub Release
