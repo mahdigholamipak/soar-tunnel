@@ -1,6 +1,6 @@
 module github.com/getlantern/soar/bench
 
-go 1.24.0
+go 1.25.0
 
 require github.com/getlantern/soar v0.0.0
 

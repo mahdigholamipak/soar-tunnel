@@ -14,10 +14,10 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"strings"
 	"time"
 )
 
@@ -104,8 +104,8 @@ func (c *ServerConfig) setDefaults() {
 type Server struct {
 	cfg   ServerConfig
 	zones []zone
-	pc  net.PacketConn
-	ctx context.Context
+	pc    net.PacketConn
+	ctx   context.Context
 
 	mu       sync.Mutex
 	sessions map[uint16]*srvSession

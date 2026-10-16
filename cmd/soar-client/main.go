@@ -26,10 +26,10 @@ import (
 )
 
 var (
-	totalBytesTx   atomic.Uint64
-	totalBytesRx   atomic.Uint64
-	activeStreams  atomic.Int64
-	totalStreams   atomic.Uint64
+	totalBytesTx  atomic.Uint64
+	totalBytesRx  atomic.Uint64
+	activeStreams atomic.Int64
+	totalStreams  atomic.Uint64
 )
 
 func logMsg(level, format string, args ...any) {
@@ -39,10 +39,10 @@ func logMsg(level, format string, args ...any) {
 }
 
 type clientEntry struct {
-	zone      string
-	client    *soar.Client
-	failures  atomic.Int32
-	lastFail  time.Time
+	zone     string
+	client   *soar.Client
+	failures atomic.Int32
+	lastFail time.Time
 }
 
 type MultiClient struct {
