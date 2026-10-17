@@ -14,7 +14,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.6";
+        private const string CurrentVersion = "v1.0.7";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -40,6 +40,9 @@ namespace SoarClient
             ProxyHelper.BackupCurrentProxy();
             InitSystemTray();
             LoadProfilesList();
+            TxtListenPort.TextChanged += (s, ev) => UpdateFooterProxyText();
+            TxtListenIP.TextChanged += (s, ev) => UpdateFooterProxyText();
+            UpdateFooterProxyText();
             _ = CheckForUpdatesAsync(silent: true);
         }
 
@@ -335,7 +338,7 @@ namespace SoarClient
                 _tunnelProcess = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 _tunnelProcess.OutputDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Dispatcher.Invoke(() => HandleProcessOutput(e.Data)); };
                 _tunnelProcess.ErrorDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Dispatcher.Invoke(() => HandleProcessOutput(e.Data)); };
-                _tunnelProcess.Exited += (s, e) => Dispatcher.Invoke(HandleProcessExited);
+                _tunnelProcess.Exited += (s, e) => Dispatcher.BeginInvoke(new Action(HandleProcessExited));
 
                 _tunnelProcess.Start();
                 _tunnelProcess.BeginOutputReadLine();
@@ -371,24 +374,46 @@ namespace SoarClient
 
         private async Task StopTunnelAsync()
         {
+            UpdateUIState(connecting: true);
+            StatusText.Text = "Disconnecting...";
+            BtnConnect.IsEnabled = false;
             AppendLog("[STOP] Disconnecting tunnel...");
 
-            if (ChkSystemProxy.IsChecked == true)
-            {
-                ProxyHelper.RestoreOriginalProxy();
-                AppendLog("[PROXY] System proxy settings restored.");
-            }
+            var restoreProxy = (ChkSystemProxy.IsChecked == true);
 
-            if (_tunnelProcess != null && !_tunnelProcess.HasExited)
+            await Task.Run(() =>
             {
-                try
+                if (restoreProxy)
                 {
-                    _tunnelProcess.Kill(entireProcessTree: true);
-                    await _tunnelProcess.WaitForExitAsync();
+                    try
+                    {
+                        ProxyHelper.RestoreOriginalProxy();
+                    }
+                    catch { }
                 }
-                catch { }
-                _tunnelProcess.Dispose();
-                _tunnelProcess = null;
+
+                if (_tunnelProcess != null)
+                {
+                    try
+                    {
+                        if (!_tunnelProcess.HasExited)
+                        {
+                            _tunnelProcess.Kill(entireProcessTree: true);
+                            _tunnelProcess.WaitForExit(2500);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { _tunnelProcess.Dispose(); } catch { }
+                        _tunnelProcess = null;
+                    }
+                }
+            });
+
+            if (restoreProxy)
+            {
+                AppendLog("[PROXY] System proxy settings restored.");
             }
 
             _isConnected = false;
@@ -435,10 +460,41 @@ namespace SoarClient
 
                 if (ChkSystemProxy.IsChecked == true)
                 {
-                    ProxyHelper.RestoreOriginalProxy();
-                    AppendLog("[PROXY] Restored original system proxy.");
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            ProxyHelper.RestoreOriginalProxy();
+                            Dispatcher.Invoke(() => AppendLog("[PROXY] Restored original system proxy."));
+                        }
+                        catch { }
+                    });
                 }
             }
+        }
+
+        private void UpdateFooterProxyText()
+        {
+            var ip = string.IsNullOrWhiteSpace(TxtListenIP?.Text) ? "127.0.0.1" : TxtListenIP.Text.Trim();
+            var port = string.IsNullOrWhiteSpace(TxtListenPort?.Text) ? "10850" : TxtListenPort.Text.Trim();
+            if (TxtFooterProxy != null)
+            {
+                TxtFooterProxy.Text = $"SOCKS5: socks5://{ip}:{port} | Telegram: tg://socks?server={ip}&port={port}";
+            }
+        }
+
+        private void TxtFooterProxy_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            var ip = string.IsNullOrWhiteSpace(TxtListenIP?.Text) ? "127.0.0.1" : TxtListenIP.Text.Trim();
+            var port = string.IsNullOrWhiteSpace(TxtListenPort?.Text) ? "10850" : TxtListenPort.Text.Trim();
+            var tgLink = $"tg://socks?server={ip}&port={port}";
+            try
+            {
+                Clipboard.SetText(tgLink);
+                AppendLog($"[CLIPBOARD] Copied Telegram proxy link: {tgLink}");
+                MessageBox.Show($"Copied Telegram proxy link to clipboard:\n\n{tgLink}", "Proxy Link Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch { }
         }
 
         private void UpdateUIState(bool connected = false, bool connecting = false)

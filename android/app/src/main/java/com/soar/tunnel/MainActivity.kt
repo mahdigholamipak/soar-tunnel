@@ -190,6 +190,36 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
+        binding.btnDeleteProfile.setOnClickListener {
+            val p = activeProfile ?: return@setOnClickListener
+            if (profiles.size <= 1) {
+                Toast.makeText(this, "Cannot delete the only remaining profile", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (TunnelProcessManager.isRunning) {
+                Toast.makeText(this, "Disconnect tunnel before deleting active profile", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            AlertDialog.Builder(this)
+                .setTitle("Delete Server Profile")
+                .setMessage("Are you sure you want to delete '${p.name}'?")
+                .setPositiveButton("Delete") { _, _ ->
+                    val idx = profiles.indexOf(p)
+                    profiles.remove(p)
+                    activeProfile = profiles.getOrNull(idx) ?: profiles.firstOrNull()
+                    activeProfile?.let {
+                        ProfileManager.setActiveProfileId(this, it.id)
+                        applyProfileToUI(it)
+                    }
+                    ProfileManager.saveProfiles(this, profiles)
+                    refreshProfileSpinner()
+                    Toast.makeText(this, "Deleted profile '${p.name}'", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
         binding.btnTestResolvers.setOnClickListener {
             testResolversLatency()
         }
@@ -444,7 +474,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.6\n\n" +
+                "SOAR DNS TUNNEL v1.0.7\n\n" +
                 "Protocol Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
