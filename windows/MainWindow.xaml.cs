@@ -37,9 +37,10 @@ namespace SoarClient
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            ProxyHelper.BackupCurrentProxy();
             InitSystemTray();
             LoadProfilesList();
-            CheckForUpdatesAsync(silent: true);
+            _ = CheckForUpdatesAsync(silent: true);
         }
 
         private void InitSystemTray()

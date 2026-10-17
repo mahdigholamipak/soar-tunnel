@@ -50,6 +50,8 @@ namespace SoarClient
             }
         }
 
+        public static bool SetSystemProxy(string ip, int port) => SetSocksProxy(ip, port);
+
         public static bool RestoreProxy()
         {
             try
@@ -76,6 +78,8 @@ namespace SoarClient
                 return false;
             }
         }
+
+        public static bool RestoreOriginalProxy() => RestoreProxy();
 
         private static void RefreshSettings()
         {
