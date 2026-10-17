@@ -80,7 +80,7 @@
                         <TextBlock Text="SOAR" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,8,0" />
                         <TextBlock Text="DNS TUNNEL" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,12,0" />
                         <Border Background="#0369A1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="v1.0.9" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+                            <TextBlock Text="v1.1.0" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="Resilient Multi-Domain DNS Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
@@ -229,7 +229,7 @@
                 <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                     <StackPanel>
                         <TextBlock Text="CONNECTION OPTIONS" FontWeight="SemiBold" Foreground="#38BDF8" FontSize="11" Margin="0,0,0,8" />
-                        <CheckBox x:Name="ChkSystemProxy" Content="Set as Windows System Proxy" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="True" ToolTip="Automatically routes Windows and browser traffic through the tunnel" />
+                        <CheckBox x:Name="ChkSystemProxy" Click="ChkSystemProxy_Click" Content="Set as Windows System Proxy" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="False" ToolTip="Automatically routes Windows and browser traffic through the tunnel" />
                         <CheckBox x:Name="ChkMinimizeToTray" Content="Minimize to System Tray on close" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,10" IsChecked="True" />
                         <CheckBox x:Name="ChkAutoDetectClipboard" Content="Auto-detect profile in clipboard" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="True" ToolTip="Prompt to import when copying a soar:// link" />
                     </StackPanel>
@@ -290,11 +290,17 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="6" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Button x:Name="BtnImportResolversFile" Grid.Column="0" Click="BtnImportResolversFile_Click" Height="28" Padding="10,2" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📂 Import from .txt" ToolTip="Import custom candidate resolvers from any text file" />
+                                <Button x:Name="BtnImportResolversFile" Grid.Column="0" Click="BtnImportResolversFile_Click" Height="28" Padding="10,2" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📂 Import .txt" ToolTip="Import custom candidate resolvers from any text file" />
                                 <Button x:Name="BtnTestResolvers" Grid.Column="2" Click="BtnTestResolvers_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="⚡ Test Latency" ToolTip="Run parallel health &amp; latency test on candidate resolvers" />
-                                <Button x:Name="BtnRefreshBank" Grid.Column="4" Click="BtnRefreshBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#A855F7" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🔄 Reload Bank" ToolTip="Reload cached resolvers from resolvers_bank.json" />
+                                <Button x:Name="BtnRefreshBank" Grid.Column="4" Click="BtnRefreshBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#A855F7" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🔄 Reload" ToolTip="Reload cached resolvers from resolvers_bank.json" />
+                                <Button x:Name="BtnDeleteBankEntry" Grid.Column="6" Click="BtnDeleteBankEntry_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#EF4444" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🗑 Delete" ToolTip="Delete selected resolver from persistent bank" />
+                                <Button x:Name="BtnClearBank" Grid.Column="8" Click="BtnClearBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#F59E0B" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🧹 Clear All" ToolTip="Clear entire persistent resolver bank" />
                             </Grid>
 
                             <!-- Candidate Resolvers Text Area -->
@@ -307,7 +313,7 @@
                             </Grid>
 
                             <!-- Resolver Bank Cache ListView -->
-                            <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11">
+                            <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11" KeyDown="LvResolverBank_KeyDown">
                                 <ListView.View>
                                     <GridView>
                                         <GridViewColumn Header="Resolver Address" Width="170" DisplayMemberBinding="{Binding Addr}" />

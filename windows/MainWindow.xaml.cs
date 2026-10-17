@@ -19,7 +19,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.9";
+        private const string CurrentVersion = "v1.1.0";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -39,6 +39,7 @@ namespace SoarClient
 
         // Clipboard Auto-Detect
         private string _lastAutoDetectedClipboard = "";
+        private bool _isSystemProxySet = false;
 
         // Syntax Highlighting Brushes
         private readonly SolidColorBrush _brushGreen = new((Color)ColorConverter.ConvertFromString("#10B981"));
@@ -160,6 +161,12 @@ namespace SoarClient
             if (_isConnected)
             {
                 await StopTunnelAsync();
+            }
+
+            if (_isSystemProxySet || ChkSystemProxy.IsChecked == true)
+            {
+                ProxyHelper.RestoreOriginalProxy();
+                _isSystemProxySet = false;
             }
 
             _notifyIcon?.Dispose();
@@ -522,7 +529,13 @@ namespace SoarClient
                     if (ChkSystemProxy.IsChecked == true)
                     {
                         ProxyHelper.SetSystemProxy(cfg.ListenIP, cfg.ListenPort);
+                        _isSystemProxySet = true;
                         AppendLog($"[PROXY] Windows system proxy routed to {cfg.ListenIP}:{cfg.ListenPort}");
+                    }
+                    else
+                    {
+                        ProxyHelper.RestoreOriginalProxy();
+                        _isSystemProxySet = false;
                     }
                 }
                 else
@@ -536,6 +549,35 @@ namespace SoarClient
                 UpdateUIState(connected: false);
                 AppendLog($"[ERROR] {ex.Message}");
                 MessageBox.Show($"Failed to launch soar-client: {ex.Message}", "Process Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ChkSystemProxy_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isConnected)
+            {
+                if (ChkSystemProxy.IsChecked == true)
+                {
+                    var ip = string.IsNullOrWhiteSpace(TxtListenIP?.Text) ? "127.0.0.1" : TxtListenIP.Text.Trim();
+                    var port = int.TryParse(TxtListenPort?.Text.Trim(), out var p) ? p : 10850;
+                    ProxyHelper.SetSystemProxy(ip, port);
+                    _isSystemProxySet = true;
+                    AppendLog($"[PROXY] Windows system proxy enabled ({ip}:{port})");
+                }
+                else
+                {
+                    ProxyHelper.RestoreOriginalProxy();
+                    _isSystemProxySet = false;
+                    AppendLog("[PROXY] Windows system proxy disabled.");
+                }
+            }
+            else
+            {
+                if (ChkSystemProxy.IsChecked != true)
+                {
+                    ProxyHelper.RestoreOriginalProxy();
+                    _isSystemProxySet = false;
+                }
             }
         }
 
@@ -557,7 +599,8 @@ namespace SoarClient
                 try { proc.EnableRaisingEvents = false; } catch { }
             }
 
-            var restoreProxy = (ChkSystemProxy.IsChecked == true);
+            var restoreProxy = _isSystemProxySet || (ChkSystemProxy.IsChecked == true);
+            _isSystemProxySet = false;
 
             await Task.Run(() =>
             {
@@ -649,8 +692,9 @@ namespace SoarClient
                 _isConnected = false;
                 UpdateUIState(connected: false);
 
-                if (ChkSystemProxy.IsChecked == true)
+                if (_isSystemProxySet || ChkSystemProxy.IsChecked == true)
                 {
+                    _isSystemProxySet = false;
                     Task.Run(() =>
                     {
                         try
@@ -862,6 +906,81 @@ namespace SoarClient
             catch (Exception ex)
             {
                 AppendLog($"[BANK] Error reading resolvers_bank.json: {ex.Message}");
+            }
+        }
+
+        private void BtnDeleteBankEntry_Click(object sender, RoutedEventArgs e)
+        {
+            DeleteSelectedBankEntry();
+        }
+
+        private void LvResolverBank_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Delete)
+            {
+                DeleteSelectedBankEntry();
+            }
+        }
+
+        private void DeleteSelectedBankEntry()
+        {
+            if (LvResolverBank.SelectedItem is not ResolverBankItemViewModel selected)
+            {
+                MessageBox.Show("Please select a resolver in the bank to delete.", "Delete Resolver", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var res = MessageBox.Show($"Are you sure you want to delete resolver '{selected.Addr}' from the persistent bank?", "Delete Resolver", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (res != MessageBoxResult.Yes) return;
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (File.Exists(bankPath))
+                {
+                    var json = File.ReadAllText(bankPath);
+                    var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    }) ?? new();
+
+                    if (entries.Remove(selected.Addr))
+                    {
+                        var updatedJson = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
+                        File.WriteAllText(bankPath, updatedJson);
+                        AppendLog($"[BANK] Deleted resolver {selected.Addr} from persistent bank cache.");
+                        LoadResolverBank();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to delete bank entry: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnClearBank_Click(object sender, RoutedEventArgs e)
+        {
+            var res = MessageBox.Show("Are you sure you want to clear the entire persistent resolver bank?\n\nAll cached latency scores and history will be reset.", "Clear Resolver Bank", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (res != MessageBoxResult.Yes) return;
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (File.Exists(bankPath))
+                {
+                    File.Delete(bankPath);
+                }
+                LvResolverBank.ItemsSource = null;
+                TxtBankCount.Text = "0 cached (Bank cleared)";
+                AppendLog("[BANK] Cleared all persistent resolver bank entries.");
+                MessageBox.Show("Resolver bank cleared successfully.", "Bank Cleared", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to clear bank: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

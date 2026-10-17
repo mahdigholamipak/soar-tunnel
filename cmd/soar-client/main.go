@@ -386,7 +386,7 @@ func main() {
 
 	// Launch background resolver scanner to dynamically add more healthy resolvers without blocking SOCKS5
 	if len(remainingResolvers) > 0 {
-		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 8, bank)
+		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 16, bank)
 	}
 
 	// Stats reporter
@@ -628,12 +628,12 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 		return
 	}
 	go func() {
-		logMsg("INFO", "[SCANNER] Starting background resolver scanner for %d remaining candidate IPs...", len(remaining))
-		batchSize := 6
+		logMsg("INFO", "[SCANNER] Starting background resolver scanner for all %d remaining candidate IPs...", len(remaining))
+		batchSize := 8
 		addedCount := 0
 		maxToAdd := maxTotalResolvers - 2
 		if maxToAdd <= 0 {
-			maxToAdd = 4
+			maxToAdd = 14
 		}
 
 		for i := 0; i < len(remaining); i += batchSize {
@@ -644,14 +644,6 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 				}
 				return
 			default:
-			}
-
-			if addedCount >= maxToAdd {
-				logMsg("INFO", "[SCANNER] Target resolver capacity reached (%d healthy paths active). Background scanner complete.", maxTotalResolvers)
-				if bank != nil {
-					_ = bank.Save()
-				}
-				return
 			}
 
 			end := min(i+batchSize, len(remaining))

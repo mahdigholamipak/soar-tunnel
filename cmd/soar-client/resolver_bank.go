@@ -185,3 +185,26 @@ func (b *ResolverBank) GetAllVerified() []string {
 	}
 	return result
 }
+
+// Delete removes an entry from the bank and saves changes.
+func (b *ResolverBank) Delete(addr string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.Entries[addr]; ok {
+		delete(b.Entries, addr)
+		_ = b.Save()
+		return true
+	}
+	return false
+}
+
+// Clear removes all entries from the bank and saves changes.
+func (b *ResolverBank) Clear() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.Entries = make(map[string]*BankEntry)
+	return b.Save()
+}
+

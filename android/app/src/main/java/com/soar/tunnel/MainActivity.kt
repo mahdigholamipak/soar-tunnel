@@ -33,12 +33,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var profiles = mutableListOf<ServerProfile>()
     private var activeProfile: ServerProfile? = null
+    private var isSpinnerInitialized = false
+
     private var scanJob: Job? = null
     private val scannedHealthyResults = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
     private var scannedTotalCount = 0
 
-    private val logBuffer = SpannableStringBuilder()
-    private val maxLogLength = 100_000
+    // Ring-buffer for console logs to prevent UI thread lockups and memory bloat
+    private val logLines = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private var isLogRenderPending = false
+    private const val MAX_LOG_LINES = 250
     private var lastDetectedClipboard = ""
 
     private val importResolversFileLauncher = registerForActivityResult(
@@ -74,6 +78,14 @@ class MainActivity : AppCompatActivity() {
         intent?.let { handleIncomingIntent(it) }
     }
 
+    override fun onDestroy() {
+        scanJob?.cancel()
+        TunnelProcessManager.onLogReceived = null
+        TunnelProcessManager.onTelemetryReceived = null
+        TunnelProcessManager.onStatusChanged = null
+        super.onDestroy()
+    }
+
     private fun handleIncomingIntent(intent: Intent) {
         if (intent.action == Intent.ACTION_VIEW) {
             val uri = intent.data
@@ -102,6 +114,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupTabs() {
+        binding.tabLayout.removeAllTabs()
+        binding.tabLayout.addTab(binding.tabLayout.newTab().setText("⚡ Dashboard"))
+        binding.tabLayout.addTab(binding.tabLayout.newTab().setText("🌐 Resolvers"))
+        binding.tabLayout.addTab(binding.tabLayout.newTab().setText("⚙️ Config & Logs"))
+
         binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab?) {
                 when (tab?.position) {
@@ -125,6 +142,9 @@ class MainActivity : AppCompatActivity() {
             override fun onTabUnselected(tab: TabLayout.Tab?) {}
             override fun onTabReselected(tab: TabLayout.Tab?) {}
         })
+
+        // Ensure Tab 0 is selected by default
+        binding.tabLayout.getTabAt(0)?.select()
     }
 
     private fun loadProfiles() {
@@ -184,6 +204,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupListeners() {
         binding.spnProfiles.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (!isSpinnerInitialized) {
+                    isSpinnerInitialized = true
+                    return
+                }
                 if (position in profiles.indices) {
                     saveCurrentProfileFromUI()
                     activeProfile = profiles[position]
@@ -215,7 +239,7 @@ class MainActivity : AppCompatActivity() {
                     activeProfile = newProf
                     ProfileManager.saveProfiles(this, profiles)
                     refreshProfileSpinner()
-                    appendColoredLog("[PROFILE] Created new server profile '${newProf.name}'")
+                    appendThrottledLog("[PROFILE] Created new server profile '${newProf.name}'")
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -261,12 +285,30 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnDeleteProfile.setOnClickListener {
             val p = activeProfile ?: return@setOnClickListener
-            if (profiles.size <= 1) {
-                Toast.makeText(this, "Cannot delete the only remaining profile", Toast.LENGTH_SHORT).show()
+            if (TunnelProcessManager.isRunning) {
+                Toast.makeText(this, "Disconnect tunnel before modifying active profile", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (TunnelProcessManager.isRunning) {
-                Toast.makeText(this, "Disconnect tunnel before deleting active profile", Toast.LENGTH_SHORT).show()
+
+            if (profiles.size <= 1) {
+                AlertDialog.Builder(this)
+                    .setTitle("Reset Profile")
+                    .setMessage("This is your only server profile. Would you like to reset it to default empty settings?")
+                    .setPositiveButton("Reset") { _, _ ->
+                        p.name = "Default Server"
+                        p.serverKey = ""
+                        p.domains = ""
+                        p.port = 10850
+                        p.resolvers = ProfileManager.DEFAULT_RESOLVERS
+                        p.isLocked = false
+                        ProfileManager.saveProfiles(this, profiles)
+                        applyProfileToUI(p)
+                        refreshProfileSpinner()
+                        Toast.makeText(this, "Reset profile to default", Toast.LENGTH_SHORT).show()
+                        appendThrottledLog("[PROFILE] Reset active profile to default settings.")
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
                 return@setOnClickListener
             }
 
@@ -284,7 +326,7 @@ class MainActivity : AppCompatActivity() {
                     ProfileManager.saveProfiles(this, profiles)
                     refreshProfileSpinner()
                     Toast.makeText(this, "Deleted profile '${p.name}'", Toast.LENGTH_SHORT).show()
-                    appendColoredLog("[PROFILE] Deleted server profile '${p.name}'")
+                    appendThrottledLog("[PROFILE] Deleted server profile '${p.name}'")
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -292,6 +334,25 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnImportResolversFile.setOnClickListener {
             importResolversFileLauncher.launch("text/*")
+        }
+
+        binding.btnClearResolvers.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Clear Resolvers")
+                .setMessage("Clear candidate resolvers list?")
+                .setPositiveButton("Clear") { _, _ ->
+                    binding.etResolvers.setText("")
+                    saveCurrentProfileFromUI()
+                    Toast.makeText(this, "Cleared resolvers list", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        binding.btnResetDefaultResolvers.setOnClickListener {
+            binding.etResolvers.setText(ProfileManager.DEFAULT_RESOLVERS)
+            saveCurrentProfileFromUI()
+            Toast.makeText(this, "Restored default resolvers", Toast.LENGTH_SHORT).show()
         }
 
         binding.btnTestResolvers.setOnClickListener {
@@ -320,7 +381,7 @@ class MainActivity : AppCompatActivity() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("SOCKS5 Proxy", proxyUrl))
             Toast.makeText(this, "Copied: $proxyUrl", Toast.LENGTH_SHORT).show()
-            appendColoredLog("[CLIPBOARD] Copied SOCKS5 link: $proxyUrl")
+            appendThrottledLog("[CLIPBOARD] Copied SOCKS5 link: $proxyUrl")
         }
 
         binding.btnOpenTelegram.setOnClickListener {
@@ -328,7 +389,7 @@ class MainActivity : AppCompatActivity() {
             val uri = Uri.parse("tg://socks?server=127.0.0.1&port=$port")
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, uri))
-                appendColoredLog("[TELEGRAM] Launched Telegram with proxy: tg://socks?server=127.0.0.1&port=$port")
+                appendThrottledLog("[TELEGRAM] Launched Telegram with proxy: tg://socks?server=127.0.0.1&port=$port")
             } catch (_: Exception) {
                 val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Telegram Proxy", uri.toString()))
@@ -337,13 +398,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.tvClearLogs.setOnClickListener {
-            logBuffer.clear()
+            synchronized(logLines) { logLines.clear() }
             binding.tvLogs.text = ""
         }
 
         binding.btnCopyLogs.setOnClickListener {
+            val fullLogs = synchronized(logLines) { logLines.joinToString("\n") }
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Console Logs", binding.tvLogs.text.toString()))
+            cm.setPrimaryClip(ClipData.newPlainText("Console Logs", fullLogs))
             Toast.makeText(this, "Copied all logs to clipboard", Toast.LENGTH_SHORT).show()
         }
     }
@@ -370,7 +432,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("Overwrite") { _, _ ->
                     binding.etResolvers.setText(lines.joinToString("\n"))
                     saveCurrentProfileFromUI()
-                    appendColoredLog("[RESOLVER] Overwrote active resolvers with ${lines.size} candidate resolvers from file.")
+                    appendThrottledLog("[RESOLVER] Overwrote active resolvers with ${lines.size} candidate resolvers from file.")
                     Toast.makeText(this, "Loaded ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
                 }
                 .setNeutralButton("Append") { _, _ ->
@@ -379,14 +441,14 @@ class MainActivity : AppCompatActivity() {
                     val merged = (existing + lines).distinct()
                     binding.etResolvers.setText(merged.joinToString("\n"))
                     saveCurrentProfileFromUI()
-                    appendColoredLog("[RESOLVER] Appended ${lines.size} candidate resolvers (Total: ${merged.size}).")
+                    appendThrottledLog("[RESOLVER] Appended ${lines.size} candidate resolvers (Total: ${merged.size}).")
                     Toast.makeText(this, "Appended ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         } catch (e: Exception) {
             Toast.makeText(this, "Failed to read file: ${e.message}", Toast.LENGTH_LONG).show()
-            appendColoredLog("[ERROR] Failed to read resolvers file: ${e.message}")
+            appendThrottledLog("[ERROR] Failed to read resolvers file: ${e.message}")
         }
     }
 
@@ -449,7 +511,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 .setNegativeButton("Close", null)
                 .show()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("Soar Profile", link))
             Toast.makeText(this, "Link copied to clipboard!", Toast.LENGTH_SHORT).show()
@@ -463,7 +525,7 @@ class MainActivity : AppCompatActivity() {
             activeProfile = imported
             ProfileManager.saveProfiles(this, profiles)
             refreshProfileSpinner()
-            appendColoredLog("[PROFILE] Imported server profile '${imported.name}'")
+            appendThrottledLog("[PROFILE] Imported server profile '${imported.name}'")
             Toast.makeText(this, "Imported: ${imported.name}", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "Invalid soar:// link format", Toast.LENGTH_SHORT).show()
@@ -475,7 +537,7 @@ class MainActivity : AppCompatActivity() {
             scanJob?.cancel()
             scanJob = null
             binding.btnTestResolvers.text = "⚡ Test Latency"
-            appendColoredLog("[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.")
+            appendThrottledLog("[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.")
             if (scannedHealthyResults.isNotEmpty()) {
                 val sorted = synchronized(scannedHealthyResults) {
                     scannedHealthyResults.sortedBy { it.second }.toList()
@@ -508,7 +570,7 @@ class MainActivity : AppCompatActivity() {
         val probeTargetName = if (targetDomain.isNotEmpty()) targetDomain else "google.com"
         binding.btnTestResolvers.text = "⏹ Stop Test"
         Toast.makeText(this, "Testing ${list.size} resolvers for $probeTargetName...", Toast.LENGTH_SHORT).show()
-        appendColoredLog("[TEST] Probing ${list.size} resolvers for $probeTargetName in parallel...")
+        appendThrottledLog("[TEST] Probing ${list.size} resolvers for $probeTargetName in parallel...")
 
         scanJob = CoroutineScope(Dispatchers.IO).launch {
             val dnsQuery = if (targetDomain.isNotEmpty()) {
@@ -569,9 +631,7 @@ class MainActivity : AppCompatActivity() {
                             socket.close()
 
                             if (recvPacket.length < 12) {
-                                withContext(Dispatchers.Main) {
-                                    appendColoredLog("[BAD] $r (short response)")
-                                }
+                                appendThrottledLog("[BAD] $r (short response)")
                                 return@async
                             }
 
@@ -582,20 +642,14 @@ class MainActivity : AppCompatActivity() {
                             val ns = ((buf[8].toInt() and 0xFF) shl 8) or (buf[9].toInt() and 0xFF)
 
                             if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0)) {
-                                withContext(Dispatchers.Main) {
-                                    appendColoredLog("[REJECTED] $r (RA=$ra, RCODE=$rcode)")
-                                }
+                                appendThrottledLog("[REJECTED] $r (RA=$ra, RCODE=$rcode)")
                                 return@async
                             }
 
                             scannedHealthyResults.add(Pair(r, elapsed))
-                            withContext(Dispatchers.Main) {
-                                appendColoredLog("[OK] $r -> ${elapsed}ms")
-                            }
+                            appendThrottledLog("[OK] $r -> ${elapsed}ms")
                         } catch (_: Exception) {
-                            withContext(Dispatchers.Main) {
-                                appendColoredLog("[TIMEOUT] $r")
-                            }
+                            appendThrottledLog("[TIMEOUT] $r")
                         }
                     }
                 }
@@ -643,14 +697,14 @@ class MainActivity : AppCompatActivity() {
                 binding.etResolvers.setText(top5.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied top ${top5.size} fastest resolvers!", Toast.LENGTH_SHORT).show()
-                appendColoredLog("[RESOLVER] Saved top ${top5.size} fastest resolvers to profile.")
+                appendThrottledLog("[RESOLVER] Saved top ${top5.size} fastest resolvers to profile.")
             }
             .setNeutralButton("Use All Working (${results.size})") { _, _ ->
                 val allWorking = results.map { it.first }
                 binding.etResolvers.setText(allWorking.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied all ${allWorking.size} working resolvers!", Toast.LENGTH_SHORT).show()
-                appendColoredLog("[RESOLVER] Saved all ${allWorking.size} working resolvers to profile.")
+                appendThrottledLog("[RESOLVER] Saved all ${allWorking.size} working resolvers to profile.")
             }
             .setNegativeButton("Copy List") { _, _ ->
                 val allWorking = results.map { it.first }.joinToString("\n")
@@ -659,11 +713,6 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Copied ${results.size} healthy resolvers to clipboard!", Toast.LENGTH_SHORT).show()
             }
             .show()
-    }
-
-    override fun onDestroy() {
-        scanJob?.cancel()
-        super.onDestroy()
     }
 
     private fun showAboutDialog() {
@@ -676,7 +725,7 @@ class MainActivity : AppCompatActivity() {
                 "Ecosystem Enhancements:\n" +
                 "• MasterDnsVPN & TheFeed inspired UI/UX\n" +
                 "• Hero Dashboard & Live Speedometer telemetry\n" +
-                "• Candidate resolver TXT file import\n" +
+                "• Candidate resolver TXT file import & management\n" +
                 "• QR Code profile sharing & clipboard auto-detect\n" +
                 "• Multi-domain failover & EWMA latency probing\n" +
                 "• Privacy-preserving locked profiles (soar://locked)\n" +
@@ -709,7 +758,7 @@ class MainActivity : AppCompatActivity() {
         }
         ContextCompat.startForegroundService(this, serviceIntent)
         updateUIState(true)
-        appendColoredLog("[START] Starting Soar tunnel service with profile '${p.name}'...")
+        appendThrottledLog("[START] Starting Soar tunnel service with profile '${p.name}'...")
     }
 
     private fun stopTunnelService() {
@@ -718,14 +767,12 @@ class MainActivity : AppCompatActivity() {
         }
         startService(serviceIntent)
         updateUIState(false)
-        appendColoredLog("[STOP] Tunnel service stopped.")
+        appendThrottledLog("[STOP] Tunnel service stopped.")
     }
 
     private fun observeTunnelEvents() {
         TunnelProcessManager.onLogReceived = { logLine ->
-            runOnUiThread {
-                appendColoredLog(logLine)
-            }
+            appendThrottledLog(logLine)
         }
 
         TunnelProcessManager.onTelemetryReceived = { telemetryLine ->
@@ -759,32 +806,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun appendColoredLog(line: String) {
-        val color = when {
-            line.startsWith("[OK]", true) || line.startsWith("[STATUS]", true) || line.startsWith("[TUNNEL]", true) ->
-                ContextCompat.getColor(this, R.color.terminal_green)
-            line.startsWith("[TIMEOUT]", true) || line.startsWith("[REJECTED]", true) || line.startsWith("[BAD]", true) || line.startsWith("[ERROR]", true) ->
-                ContextCompat.getColor(this, R.color.terminal_red)
-            line.startsWith("[WARN]", true) ->
-                ContextCompat.getColor(this, R.color.terminal_amber)
-            line.startsWith("[TEST]", true) || line.startsWith("[START]", true) || line.startsWith("[TELEMETRY]", true) || line.startsWith("[PROFILE]", true) ->
-                ContextCompat.getColor(this, R.color.terminal_cyan)
-            line.startsWith("[BANK]", true) || line.startsWith("[RESOLVER]", true) ->
-                ContextCompat.getColor(this, R.color.terminal_purple)
-            else ->
-                ContextCompat.getColor(this, R.color.text_light)
+    // Thread-safe, throttled log aggregator that prevents Choreographer / UI thread lockups
+    private fun appendThrottledLog(line: String) {
+        synchronized(logLines) {
+            logLines.add(line)
+            if (logLines.size > MAX_LOG_LINES) {
+                logLines.removeAt(0)
+            }
         }
 
-        val start = logBuffer.length
-        logBuffer.append(line).append("\n")
-        val end = logBuffer.length
-        logBuffer.setSpan(ForegroundColorSpan(color), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (!isLogRenderPending) {
+            isLogRenderPending = true
+            binding.tvLogs.postDelayed({
+                isLogRenderPending = false
+                renderLogs()
+            }, 150)
+        }
+    }
 
-        if (logBuffer.length > maxLogLength) {
-            logBuffer.delete(0, 20_000)
+    private fun renderLogs() {
+        val linesSnapshot = synchronized(logLines) { logLines.toList() }
+        val sb = SpannableStringBuilder()
+        for (l in linesSnapshot) {
+            val color = when {
+                l.startsWith("[OK]", true) || l.startsWith("[STATUS]", true) || l.startsWith("[TUNNEL]", true) ->
+                    ContextCompat.getColor(this, R.color.terminal_green)
+                l.startsWith("[TIMEOUT]", true) || l.startsWith("[REJECTED]", true) || l.startsWith("[BAD]", true) || l.startsWith("[ERROR]", true) ->
+                    ContextCompat.getColor(this, R.color.terminal_red)
+                l.startsWith("[WARN]", true) ->
+                    ContextCompat.getColor(this, R.color.terminal_amber)
+                l.startsWith("[TEST]", true) || l.startsWith("[START]", true) || l.startsWith("[TELEMETRY]", true) || l.startsWith("[PROFILE]", true) ->
+                    ContextCompat.getColor(this, R.color.terminal_cyan)
+                l.startsWith("[BANK]", true) || l.startsWith("[RESOLVER]", true) ->
+                    ContextCompat.getColor(this, R.color.terminal_purple)
+                else ->
+                    ContextCompat.getColor(this, R.color.text_light)
+            }
+            val start = sb.length
+            sb.append(l).append("\n")
+            sb.setSpan(ForegroundColorSpan(color), start, sb.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        binding.tvLogs.text = logBuffer
+        binding.tvLogs.text = sb
         binding.scrollLogs.post {
             binding.scrollLogs.fullScroll(View.FOCUS_DOWN)
         }
