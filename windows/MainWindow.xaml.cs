@@ -14,7 +14,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.2";
+        private const string CurrentVersion = "v1.0.5";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;

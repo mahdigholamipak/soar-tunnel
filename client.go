@@ -344,6 +344,24 @@ func (c *Client) addPathLocked(r string) error {
 	return nil
 }
 
+// AddResolver adds a resolver to the running client dynamically and wakes the run loop.
+func (c *Client) AddResolver(r string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	err := c.addPathLocked(r)
+	if err == nil {
+		c.wake()
+	}
+	return err
+}
+
+// ResolverCount returns the number of active/known paths in the client.
+func (c *Client) ResolverCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.paths)
+}
+
 func (c *Client) newPath(ua *net.UDPAddr, tcp bool) *path {
 	p := &path{addr: ua, cwnd: 4, ssthresh: float64(c.cfg.MaxPathWindow), created: time.Now(),
 		nameLen: c.cfg.SafeQName, sizeCeil: c.cfg.maxLimitClass() + 1, maxClass: c.cfg.maxLimitClass(), qtype: typeTXT}

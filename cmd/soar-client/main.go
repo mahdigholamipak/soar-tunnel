@@ -109,100 +109,61 @@ func (m *MultiClient) Close() {
 	}
 }
 
+// AddResolver dynamically adds a resolver across all domain clients.
+func (m *MultiClient) AddResolver(r string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.clients {
+		_ = e.client.AddResolver(r)
+	}
+}
+
 func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn, string, error) {
 	m.mu.RLock()
 	count := len(m.clients)
 	startIdx := m.activeIdx
+	perDialTimeout := m.dialTimeout
 	m.mu.RUnlock()
 
-	if count == 1 {
-		entry := m.clients[0]
-		dialCtx, cancel := context.WithTimeout(ctx, m.dialTimeout)
-		defer cancel()
-		conn, err := entry.client.DialContext(dialCtx, network, addr)
-		if err != nil {
-			return nil, "", err
-		}
-		return conn, entry.zone, nil
+	if count == 0 {
+		return nil, "", errors.New("no tunnel domains configured")
 	}
 
-	// Concurrent Happy Eyeballs dial across available domains (350ms stagger)
-	type dialResult struct {
-		conn net.Conn
-		zone string
-		idx  int
-		err  error
+	// For multi-domain configs, cap per-domain attempt to 4s for rapid failover
+	if count > 1 && perDialTimeout > 4*time.Second {
+		perDialTimeout = 4 * time.Second
 	}
 
-	resCh := make(chan dialResult, count)
-	dialCtx, cancelAll := context.WithCancel(ctx)
-	defer cancelAll()
-
-	var started int
+	var lastErr error
 	for i := 0; i < count; i++ {
 		idx := (startIdx + i) % count
 		entry := m.clients[idx]
 
+		// Skip temporarily if recent consecutive failures and more domains are available
 		if count > 1 && entry.failures.Load() >= 3 && time.Since(entry.lastFail) < 30*time.Second {
 			continue
 		}
 
-		started++
-		go func(targetIdx int, e *clientEntry) {
-			childCtx, cancelChild := context.WithTimeout(dialCtx, m.dialTimeout)
-			defer cancelChild()
+		dialCtx, cancel := context.WithTimeout(ctx, perDialTimeout)
+		conn, err := entry.client.DialContext(dialCtx, network, addr)
+		cancel()
 
-			conn, err := e.client.DialContext(childCtx, network, addr)
-			if err != nil {
-				e.failures.Add(1)
-				e.lastFail = time.Now()
-				resCh <- dialResult{err: err, zone: e.zone, idx: targetIdx}
-				return
+		if err == nil {
+			entry.failures.Store(0)
+			if idx != startIdx {
+				m.mu.Lock()
+				m.activeIdx = idx
+				m.mu.Unlock()
+				logMsg("INFO", "Failover: active domain switched to %s", entry.zone)
 			}
-
-			e.failures.Store(0)
-			resCh <- dialResult{conn: conn, zone: e.zone, idx: targetIdx}
-		}(idx, entry)
-
-		// Wait up to 350ms before launching the next domain fallback
-		timer := time.NewTimer(350 * time.Millisecond)
-		select {
-		case r := <-resCh:
-			timer.Stop()
-			if r.conn != nil {
-				if r.idx != startIdx {
-					m.mu.Lock()
-					m.activeIdx = r.idx
-					m.mu.Unlock()
-					logMsg("INFO", "Fastest domain: selected %s", r.zone)
-				}
-				return r.conn, r.zone, nil
-			}
-		case <-timer.C:
-			// 350ms passed without response; launch next candidate domain in parallel
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, "", ctx.Err()
+			return conn, entry.zone, nil
 		}
-	}
 
-	// Collect results from remaining running attempts
-	var lastErr error
-	for i := 0; i < started-1; i++ {
-		select {
-		case r := <-resCh:
-			if r.conn != nil {
-				if r.idx != startIdx {
-					m.mu.Lock()
-					m.activeIdx = r.idx
-					m.mu.Unlock()
-					logMsg("INFO", "Fastest domain: selected %s", r.zone)
-				}
-				return r.conn, r.zone, nil
-			}
-			lastErr = r.err
-		case <-ctx.Done():
-			return nil, "", ctx.Err()
+		lastErr = err
+		entry.failures.Add(1)
+		entry.lastFail = time.Now()
+		if count > 1 {
+			logMsg("WARN", "Domain %s dial error (%v), trying fallback...", entry.zone, err)
 		}
 	}
 
@@ -376,18 +337,17 @@ func main() {
 	logMsg("INFO", "Initializing Soar DNS Tunnel...")
 	logMsg("INFO", "Configured domains (%d): %s", len(cfg.Domains), strings.Join(cfg.Domains, ", "))
 	logMsg("INFO", "Loaded resolvers: %d candidate IPs", len(resolvers))
-	if len(resolvers) > 6 {
-		logMsg("INFO", "Discovered %d candidate resolvers; running fast latency ranking to select top 6...", len(resolvers))
-		resolvers = selectBestResolvers(resolvers, 6)
-		logMsg("INFO", "Selected top %d responsive resolvers: %s", len(resolvers), strings.Join(resolvers, ", "))
-	}
+
+	// Fast startup: acquire first healthy resolver(s) immediately; remaining resolvers scanned concurrently in background
+	initialResolvers, remainingResolvers := findInitialResolvers(resolvers)
+	logMsg("INFO", "Engine starting with initial healthy resolver(s): %s", strings.Join(initialResolvers, ", "))
 
 	dialTimeout := time.Duration(cfg.DialTimeoutSeconds * float64(time.Second))
 	if dialTimeout <= 0 {
 		dialTimeout = 15 * time.Second
 	}
 
-	multiClient, err := NewMultiClient(cfg.Domains, ed25519.PublicKey(keyBytes), resolvers, cfg.Country, dialTimeout, logger)
+	multiClient, err := NewMultiClient(cfg.Domains, ed25519.PublicKey(keyBytes), initialResolvers, cfg.Country, dialTimeout, logger)
 	if err != nil {
 		logMsg("ERROR", "Tunnel client init failed: %v", err)
 		os.Exit(1)
@@ -407,6 +367,14 @@ func main() {
 	logMsg("INFO", "  SOCKS5 Proxy:  socks5://%s", listenAddr)
 	logMsg("INFO", "  Idle Timeout:  %.1fs per inactive stream", cfg.StreamIdleTimeoutSeconds)
 	logMsg("INFO", "=====================================================")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Launch background resolver scanner to dynamically add more healthy resolvers without blocking SOCKS5
+	if len(remainingResolvers) > 0 {
+		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, 10)
+	}
 
 	// Stats reporter
 	go func() {
@@ -441,9 +409,6 @@ func main() {
 			}
 		}
 	}()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		<-ctx.Done()
@@ -503,16 +468,7 @@ func loadResolvers(filename string) []string {
 	return nil
 }
 
-func selectBestResolvers(candidates []string, maxKeep int) []string {
-	if len(candidates) <= maxKeep {
-		return candidates
-	}
-	type resPing struct {
-		addr string
-		rtt  time.Duration
-	}
-	ch := make(chan resPing, len(candidates))
-
+func probeResolver(addr string, timeout time.Duration) (bool, time.Duration) {
 	dnsQuery := []byte{
 		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00,
@@ -520,56 +476,139 @@ func selectBestResolvers(candidates []string, maxKeep int) []string {
 		0x03, 'c', 'o', 'm', 0x00,
 		0x00, 0x01, 0x00, 0x01,
 	}
+	start := time.Now()
+	conn, err := net.DialTimeout("udp", addr, timeout)
+	if err != nil {
+		return false, 0
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write(dnsQuery); err != nil {
+		return false, 0
+	}
+	var reply [512]byte
+	if _, err := conn.Read(reply[:]); err != nil {
+		return false, 0
+	}
+	return true, time.Since(start)
+}
 
-	for _, addr := range candidates {
+func findInitialResolvers(candidates []string) ([]string, []string) {
+	if len(candidates) <= 2 {
+		return candidates, nil
+	}
+
+	type pingRes struct {
+		addr string
+		rtt  time.Duration
+	}
+	foundCh := make(chan pingRes, len(candidates))
+
+	// Rapid parallel probe on the first batch of candidates with a 650ms timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+
+	probeCount := min(len(candidates), 10)
+	for i := 0; i < probeCount; i++ {
+		addr := candidates[i]
 		go func(a string) {
-			start := time.Now()
-			conn, err := net.DialTimeout("udp", a, 350*time.Millisecond)
-			if err != nil {
-				ch <- resPing{addr: a, rtt: time.Hour}
-				return
+			ok, rtt := probeResolver(a, 650*time.Millisecond)
+			if ok {
+				select {
+				case foundCh <- pingRes{addr: a, rtt: rtt}:
+				case <-ctx.Done():
+				}
 			}
-			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(350 * time.Millisecond))
-			if _, err := conn.Write(dnsQuery); err != nil {
-				ch <- resPing{addr: a, rtt: time.Hour}
-				return
-			}
-			var reply [512]byte
-			if _, err := conn.Read(reply[:]); err != nil {
-				ch <- resPing{addr: a, rtt: time.Hour}
-				return
-			}
-			ch <- resPing{addr: a, rtt: time.Since(start)}
 		}(addr)
 	}
 
-	var healthy []resPing
-	for i := 0; i < len(candidates); i++ {
-		p := <-ch
-		if p.rtt < time.Hour {
-			healthy = append(healthy, p)
+	var initial []string
+	select {
+	case first := <-foundCh:
+		initial = append(initial, first.addr)
+		logMsg("INFO", "Fast startup: acquired first healthy resolver %s (latency: %v)", first.addr, first.rtt)
+		// If another fast resolver already answered, take it as well
+		select {
+		case second := <-foundCh:
+			initial = append(initial, second.addr)
+		default:
+		}
+	case <-ctx.Done():
+		initial = append(initial, candidates[0])
+		if len(candidates) > 1 {
+			initial = append(initial, candidates[1])
+		}
+		logMsg("WARN", "Initial resolver probe timed out; starting with first candidates: %v", initial)
+	}
+
+	var remaining []string
+	for _, c := range candidates {
+		if !slices.Contains(initial, c) {
+			remaining = append(remaining, c)
 		}
 	}
+	return initial, remaining
+}
 
-	slices.SortFunc(healthy, func(a, b resPing) int {
-		return int(a.rtt - b.rtt)
-	})
-
-	var best []string
-	for _, h := range healthy {
-		best = append(best, h.addr)
-		if len(best) >= maxKeep {
-			break
+func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClient, remaining []string, maxTotalResolvers int) {
+	if len(remaining) == 0 {
+		return
+	}
+	go func() {
+		logMsg("INFO", "[SCANNER] Starting background resolver scanner for %d remaining candidate IPs...", len(remaining))
+		batchSize := 6
+		addedCount := 0
+		maxToAdd := maxTotalResolvers - 2
+		if maxToAdd <= 0 {
+			maxToAdd = 8
 		}
-	}
 
-	// If no candidate answered the quick probe (e.g. strict probe filtering), fallback to first few
-	if len(best) == 0 {
-		return candidates[:min(len(candidates), maxKeep)]
-	}
+		for i := 0; i < len(remaining); i += batchSize {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
-	return best
+			if addedCount >= maxToAdd {
+				logMsg("INFO", "[SCANNER] Target resolver capacity reached (%d healthy paths active). Background scanner complete.", maxTotalResolvers)
+				return
+			}
+
+			end := min(i+batchSize, len(remaining))
+			batch := remaining[i:end]
+
+			type batchRes struct {
+				addr string
+				rtt  time.Duration
+				ok   bool
+			}
+			resCh := make(chan batchRes, len(batch))
+
+			for _, addr := range batch {
+				go func(a string) {
+					ok, rtt := probeResolver(a, 850*time.Millisecond)
+					resCh <- batchRes{addr: a, rtt: rtt, ok: ok}
+				}(addr)
+			}
+
+			for range batch {
+				select {
+				case res := <-resCh:
+					if res.ok && addedCount < maxToAdd {
+						multiClient.AddResolver(res.addr)
+						addedCount++
+						logMsg("INFO", "[SCANNER] Dynamically added healthy resolver to running core: %s (RTT: %v)", res.addr, res.rtt)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			time.Sleep(120 * time.Millisecond)
+		}
+		logMsg("INFO", "[SCANNER] Finished scanning all candidate resolvers. Added %d verified healthy paths.", addedCount)
+	}()
 }
 
 func handleSocks5(ctx context.Context, clientConn net.Conn, multiClient *MultiClient, idleTimeout time.Duration) {

@@ -26,6 +26,8 @@ class MainActivity : AppCompatActivity() {
     private var profiles = mutableListOf<ServerProfile>()
     private var activeProfile: ServerProfile? = null
     private var scanJob: Job? = null
+    private val scannedHealthyResults = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
+    private var scannedTotalCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -249,8 +251,15 @@ class MainActivity : AppCompatActivity() {
             scanJob?.cancel()
             scanJob = null
             binding.btnTestResolvers.text = "Test Resolvers"
-            binding.tvLogs.append("\n[TEST] Scan stopped by user.\n")
-            Toast.makeText(this, "Scan stopped", Toast.LENGTH_SHORT).show()
+            binding.tvLogs.append("\n[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.\n")
+            if (scannedHealthyResults.isNotEmpty()) {
+                val sorted = synchronized(scannedHealthyResults) {
+                    scannedHealthyResults.sortedBy { it.second }.toList()
+                }
+                showHealthyResolversDialog(sorted, scannedTotalCount)
+            } else {
+                Toast.makeText(this, "Scan stopped (no responsive resolvers found yet)", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
@@ -263,6 +272,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "No resolvers to test", Toast.LENGTH_SHORT).show()
             return
         }
+
+        scannedHealthyResults.clear()
+        scannedTotalCount = list.size
 
         binding.btnTestResolvers.text = "Stop Test"
         Toast.makeText(this, "Testing ${list.size} resolvers in parallel...", Toast.LENGTH_SHORT).show()
@@ -282,7 +294,6 @@ class MainActivity : AppCompatActivity() {
                 0x00, 0x01
             )
 
-            val results = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
             val chunks = list.chunked(10)
 
             for (chunk in chunks) {
@@ -307,7 +318,7 @@ class MainActivity : AppCompatActivity() {
                             val elapsed = System.currentTimeMillis() - startTime
                             socket.close()
 
-                            results.add(Pair(r, elapsed))
+                            scannedHealthyResults.add(Pair(r, elapsed))
                             withContext(Dispatchers.Main) {
                                 binding.tvLogs.append("[OK] $r -> ${elapsed}ms\n")
                             }
@@ -321,14 +332,15 @@ class MainActivity : AppCompatActivity() {
                 jobs.awaitAll()
             }
 
-            results.sortBy { it.second }
-
             withContext(Dispatchers.Main) {
                 binding.btnTestResolvers.text = "Test Resolvers"
                 scanJob = null
 
-                if (results.isNotEmpty()) {
-                    showHealthyResolversDialog(results, list.size)
+                if (scannedHealthyResults.isNotEmpty()) {
+                    val sorted = synchronized(scannedHealthyResults) {
+                        scannedHealthyResults.sortedBy { it.second }.toList()
+                    }
+                    showHealthyResolversDialog(sorted, scannedTotalCount)
                 } else {
                     Toast.makeText(this@MainActivity, "No responsive resolvers found", Toast.LENGTH_LONG).show()
                 }
@@ -386,7 +398,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.4\n\n" +
+                "SOAR DNS TUNNEL v1.0.5\n\n" +
                 "Protocol Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
