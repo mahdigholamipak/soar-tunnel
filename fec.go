@@ -80,12 +80,12 @@ func ReconstructMissing(parity []byte, knownPackets [][]byte) []byte {
 
 // FECEncoder buffers sent packets and emits an FEC parity frame every K packets.
 type FECEncoder struct {
-	mu        sync.Mutex
-	k         int
-	groupID   uint64
-	currPNs   []uint64
-	currPkts  [][]byte
-	pending   []*fecFrame
+	mu       sync.Mutex
+	k        int
+	groupID  uint64
+	currPNs  []uint64
+	currPkts [][]byte
+	pending  []*fecFrame
 }
 
 // NewFECEncoder creates a new FEC encoder with group size k (default 4).

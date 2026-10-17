@@ -528,9 +528,9 @@ func buildSOAQueryWithEDNS(domain string, ednsSize uint16) []byte {
 
 	// Optional EDNS0 OPT RR (Type 41)
 	if ednsSize > 0 {
-		buf = append(buf, 0x00)                                   // root name
-		buf = append(buf, 0x00, 0x29)                            // Type OPT (41)
-		buf = binary.BigEndian.AppendUint16(buf, ednsSize)       // Class = UDP payload size
+		buf = append(buf, 0x00)                               // root name
+		buf = append(buf, 0x00, 0x29)                         // Type OPT (41)
+		buf = binary.BigEndian.AppendUint16(buf, ednsSize)    // Class = UDP payload size
 		buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00) // Ext RCODE & Flags & RDLEN=0
 	}
 
