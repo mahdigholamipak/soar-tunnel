@@ -14,7 +14,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.7";
+        private const string CurrentVersion = "v1.0.8";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -22,6 +22,11 @@ namespace SoarClient
         private string _configPath = "client_config.toml";
         private List<ServerProfile> _profiles = new();
         private ServerProfile? _activeProfile;
+
+        // Resolver Scanner
+        private System.Threading.CancellationTokenSource? _scanCts;
+        private readonly List<(string Addr, long PingMs)> _healthyScanResults = new();
+        private int _totalScanTested = 0;
 
         // System Tray
         private System.Windows.Forms.NotifyIcon? _notifyIcon;
@@ -549,8 +554,29 @@ namespace SoarClient
             return query.ToArray();
         }
 
-        private void BtnTestResolvers_Click(object sender, RoutedEventArgs e)
+        private async void BtnTestResolvers_Click(object sender, RoutedEventArgs e)
         {
+            if (_scanCts != null)
+            {
+                // User clicked "Stop Test"
+                _scanCts.Cancel();
+                _scanCts = null;
+                BtnTestResolvers.Content = "Test Latency";
+                BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
+                AppendLog("[RESOLVER] Scanner stopped by user.");
+
+                if (_healthyScanResults.Count > 0)
+                {
+                    List<(string Addr, long PingMs)> sorted;
+                    lock (_healthyScanResults)
+                    {
+                        sorted = _healthyScanResults.OrderBy(x => x.PingMs).ToList();
+                    }
+                    ShowHealthyResolversDialog(sorted, _totalScanTested);
+                }
+                return;
+            }
+
             string domain = "";
             if (!string.IsNullOrWhiteSpace(TxtDomains.Text))
             {
@@ -562,65 +588,188 @@ namespace SoarClient
                 domain = "google.com";
             }
 
-            AppendLog($"[RESOLVER] Testing candidate resolvers for {domain} (strictly validating recursion & authority)...");
             var filePath = Path.Combine(AppContext.BaseDirectory, TxtResolversFile.Text.Trim());
             if (!File.Exists(filePath))
             {
                 AppendLog($"[RESOLVER] Resolvers file not found: {filePath}");
+                MessageBox.Show($"Resolvers file not found:\n{filePath}", "File Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            Task.Run(() =>
+            var lines = File.ReadAllLines(filePath)
+                .Select(l => l.Trim())
+                .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
+                .ToList();
+
+            if (lines.Count == 0)
             {
-                var lines = File.ReadAllLines(filePath)
-                    .Select(l => l.Trim())
-                    .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
-                    .Take(25).ToList();
+                AppendLog($"[RESOLVER] No candidate resolvers found in: {filePath}");
+                return;
+            }
 
-                var query = BuildDnsQuery(domain);
+            lock (_healthyScanResults)
+            {
+                _healthyScanResults.Clear();
+            }
+            _totalScanTested = lines.Count;
 
-                foreach (var r in lines)
+            _scanCts = new System.Threading.CancellationTokenSource();
+            var token = _scanCts.Token;
+
+            BtnTestResolvers.Content = "Stop Test";
+            BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
+            AppendLog($"[RESOLVER] Testing {lines.Count} resolvers for {domain} in parallel (Click 'Stop Test' anytime)...");
+
+            var query = BuildDnsQuery(domain);
+
+            try
+            {
+                await Task.Run(async () =>
                 {
-                    var sw = Stopwatch.StartNew();
+                    using var semaphore = new System.Threading.SemaphoreSlim(12);
+                    var tasks = new List<Task>();
+
+                    foreach (var r in lines)
+                    {
+                        if (token.IsCancellationRequested) break;
+                        await semaphore.WaitAsync(token);
+
+                        tasks.Add(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                if (token.IsCancellationRequested) return;
+
+                                var ep = r.Contains(':') ? r : r + ":53";
+                                var parts = ep.Split(':');
+                                var host = parts[0];
+                                var port = int.Parse(parts[1]);
+
+                                var sw = Stopwatch.StartNew();
+                                using var udp = new System.Net.Sockets.UdpClient();
+                                udp.Client.ReceiveTimeout = 900;
+                                await udp.SendAsync(query, query.Length, host, port);
+
+                                var receiveTask = udp.ReceiveAsync();
+                                var completed = await Task.WhenAny(receiveTask, Task.Delay(900, token));
+
+                                if (completed == receiveTask)
+                                {
+                                    var res = await receiveTask;
+                                    sw.Stop();
+                                    var resp = res.Buffer;
+
+                                    if (resp.Length >= 12)
+                                    {
+                                        bool qr = (resp[2] & 0x80) != 0;
+                                        bool ra = (resp[3] & 0x80) != 0;
+                                        int rcode = resp[3] & 0x0F;
+                                        int an = (resp[6] << 8) | resp[7];
+                                        int ns = (resp[8] << 8) | resp[9];
+
+                                        if (qr && ra && rcode == 0 && (an > 0 || ns > 0))
+                                        {
+                                            lock (_healthyScanResults)
+                                            {
+                                                _healthyScanResults.Add((ep, sw.ElapsedMilliseconds));
+                                            }
+                                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                            finally
+                            {
+                                semaphore.Release();
+                            }
+                        }, token));
+                    }
+
                     try
                     {
-                        var ep = r.Contains(':') ? r : r + ":53";
-                        var host = ep.Split(':')[0];
-                        var port = int.Parse(ep.Split(':')[1]);
-                        using var client = new System.Net.Sockets.UdpClient();
-                        client.Client.ReceiveTimeout = 1200;
-                        client.Send(query, query.Length, host, port);
-                        var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
-                        var resp = client.Receive(ref remote);
-                        sw.Stop();
-
-                        if (resp.Length < 12)
-                        {
-                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> Bad response (<12 bytes)"));
-                            continue;
-                        }
-
-                        bool qr = (resp[2] & 0x80) != 0;
-                        bool ra = (resp[3] & 0x80) != 0;
-                        int rcode = resp[3] & 0x0F;
-                        int an = (resp[6] << 8) | resp[7];
-                        int ns = (resp[8] << 8) | resp[9];
-
-                        if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0))
-                        {
-                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> Rejected (RA={ra}, RCODE={rcode})"));
-                        }
-                        else
-                        {
-                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
-                        }
+                        await Task.WhenAll(tasks);
                     }
-                    catch
-                    {
-                        Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {r} -> Timeout / Blocked"));
-                    }
+                    catch { }
+                }, token);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                AppendLog($"[RESOLVER] Scanner error: {ex.Message}");
+            }
+            finally
+            {
+                _scanCts = null;
+                BtnTestResolvers.Content = "Test Latency";
+                BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
+
+                List<(string Addr, long PingMs)> sorted;
+                lock (_healthyScanResults)
+                {
+                    sorted = _healthyScanResults.OrderBy(x => x.PingMs).ToList();
                 }
-            });
+
+                if (sorted.Count > 0)
+                {
+                    ShowHealthyResolversDialog(sorted, _totalScanTested);
+                }
+                else
+                {
+                    MessageBox.Show("No responsive resolvers found.", "Test Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+
+        private void ShowHealthyResolversDialog(List<(string Addr, long PingMs)> results, int totalTested)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Found {results.Count} of {totalTested} responsive resolvers:\n");
+
+            for (int i = 0; i < Math.Min(results.Count, 12); i++)
+            {
+                var (addr, ping) = results[i];
+                var badge = ping < 120 ? "🟢" : (ping < 300 ? "🟡" : "🟠");
+                sb.AppendLine($"{badge} {addr} ({ping} ms)");
+            }
+            if (results.Count > 12)
+            {
+                sb.AppendLine($"... and {results.Count - 12} more.");
+            }
+
+            sb.AppendLine("\nOptions:");
+            sb.AppendLine("• Click [Yes] to save the fastest resolvers into your resolvers file.");
+            sb.AppendLine("• Click [No] to copy all healthy resolvers to clipboard.");
+            sb.AppendLine("• Click [Cancel] to dismiss.");
+
+            var res = MessageBox.Show(sb.ToString(), "Healthy Resolvers", MessageBoxButton.YesNoCancel, MessageBoxImage.Information);
+            if (res == MessageBoxResult.Yes)
+            {
+                var top = results.Take(Math.Min(results.Count, 10)).Select(x => x.Addr).ToList();
+                var filePath = Path.Combine(AppContext.BaseDirectory, TxtResolversFile.Text.Trim());
+                try
+                {
+                    File.WriteAllLines(filePath, top);
+                    AppendLog($"[RESOLVER] Saved {top.Count} fastest resolvers to {filePath}");
+                    MessageBox.Show($"Updated {TxtResolversFile.Text} with top {top.Count} fastest resolvers!", "Resolvers Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"[RESOLVER] Error saving file: {ex.Message}");
+                }
+            }
+            else if (res == MessageBoxResult.No)
+            {
+                var all = string.Join(Environment.NewLine, results.Select(x => x.Addr));
+                try
+                {
+                    Clipboard.SetText(all);
+                    AppendLog($"[RESOLVER] Copied {results.Count} healthy resolvers to clipboard.");
+                    MessageBox.Show($"Copied {results.Count} healthy resolvers to clipboard!", "Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch { }
+            }
         }
 
         private async void BtnCheckUpdate_Click(object sender, RoutedEventArgs e)

@@ -51,7 +51,7 @@
                         <TextBlock Text="SOAR" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,8,0" />
                         <TextBlock Text="DNS TUNNEL" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,12,0" />
                         <Border Background="#0369A1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="v1.0.7" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+                            <TextBlock Text="v1.0.8" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="Loss-Tolerant Multi-Domain Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
@@ -159,7 +159,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="RESOLVERS FILE" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" />
-                            <Button Grid.Column="1" Click="BtnTestResolvers_Click" Content="Test Latency" Height="22" Padding="6,1" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="10" ToolTip="Test ping of all candidate resolvers" />
+                            <Button x:Name="BtnTestResolvers" Grid.Column="1" Click="BtnTestResolvers_Click" Content="Test Latency" Height="22" Padding="6,1" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="10" ToolTip="Test ping of all candidate resolvers" />
                         </Grid>
                         <TextBox x:Name="TxtResolversFile" Text="client_resolvers.txt" Margin="0,0,0,14" />
 

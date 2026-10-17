@@ -639,8 +639,10 @@ func (p *path) onLoss(now time.Time) {
 		p.ssthresh = max(2, p.cwnd)
 		p.lastCut = now
 	}
-	if p.consec >= 5 && now.Sub(p.lastSuccess) > 2*time.Second {
-		backoff := min(time.Duration(1<<min(p.consec-5, 4))*time.Second, 15*time.Second)
+	if p.consec >= 4 && now.Sub(p.lastSuccess) > 1500*time.Millisecond {
+		// Auto-quarantine (MasterDnsVPN / TheFeed): if consecutive failures reach 4,
+		// quarantine the path with exponential backoff up to 30s to prevent drag on the session.
+		backoff := min(time.Duration(1<<min(p.consec-4, 5))*time.Second, 30*time.Second)
 		p.suspended = now.Add(backoff)
 		p.cwnd = 1
 	}
@@ -994,7 +996,11 @@ func (c *Client) pickPathLocked(now time.Time, exclude *path) *path {
 		if p.hasRTT {
 			rtt = p.srtt
 		}
-		score := float64(rtt) * (1 + float64(p.inflight)/p.cwnd) / (1 - min(p.lossRate(), 0.9))
+		// Loss-weighted exponential penalty (MasterDnsVPN strategy & TheFeed):
+		// High packet loss causes multi-second RTO timeouts and stream stalls;
+		// heavily penalize lossy paths so low-loss paths are prioritized.
+		lossFactor := math.Pow(math.Max(0.05, 1.0-p.lossRate()), 2.5)
+		score := (float64(rtt) * (1 + float64(p.inflight)/p.cwnd)) / lossFactor
 		if best == nil || score < bestScore {
 			best, bestScore = p, score
 		}
@@ -1073,7 +1079,22 @@ func (c *Client) sendDataLocked(cs *clientSession, p *path, now time.Time, allow
 			plain = append(plain, frPadding)
 		}
 	}
-	dup := allowDup && pkt != nil && len(pkt.streams) > 0 && p.verified && !cs.hasData()
+	// Scatter Mode / Packet Duplication (TheFeed & MasterDnsVPN):
+	// Duplicate packets across secondary path when:
+	// 1. Tail of an upload (!cs.hasData())
+	// 2. Stream initialization (contains offset 0, e.g. TLS handshake / stream SYN)
+	// 3. Elevated path packet loss (>15%) when inflight has headroom
+	isStreamStart := false
+	if pkt != nil {
+		for _, r := range pkt.streams {
+			if r.lo == 0 {
+				isStreamStart = true
+				break
+			}
+		}
+	}
+	highLoss := p.lossRate() > 0.15
+	dup := allowDup && pkt != nil && len(pkt.streams) > 0 && p.verified && (!cs.hasData() || isStreamStart || (highLoss && c.liveQueriesLocked() < c.cfg.MaxInflight/2))
 	payload := cs.seal.sealUp(cs.sid, pn, plain)
 	cs.mu.Unlock()
 	dbg("cli send pn=%d path=%s plain=%x", pn, p.addr, plain)

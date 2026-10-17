@@ -338,9 +338,21 @@ func main() {
 	logMsg("INFO", "Configured domains (%d): %s", len(cfg.Domains), strings.Join(cfg.Domains, ", "))
 	logMsg("INFO", "Loaded resolvers: %d candidate IPs", len(resolvers))
 
+	// Resolver Bank (TheFeed / MasterDnsVPN pattern)
+	bankPath := "resolvers_bank.json"
+	if configFileToLoad != "" {
+		bankPath = filepath.Join(filepath.Dir(configFileToLoad), "resolvers_bank.json")
+	} else if exe, err := os.Executable(); err == nil {
+		bankPath = filepath.Join(filepath.Dir(exe), "resolvers_bank.json")
+	}
+	bank := NewResolverBank(bankPath)
+	if len(bank.Entries) > 0 {
+		logMsg("INFO", "[BANK] Loaded %d known resolver(s) from persistent cache: %s", len(bank.Entries), bankPath)
+	}
+
 	// Fast startup: acquire first healthy resolver(s) immediately; remaining resolvers scanned concurrently in background
 	primaryDomain := cfg.Domains[0]
-	initialResolvers, remainingResolvers := findInitialResolvers(resolvers, primaryDomain)
+	initialResolvers, remainingResolvers := findInitialResolvers(resolvers, primaryDomain, bank)
 	logMsg("INFO", "Engine starting with initial healthy resolver(s): %s", strings.Join(initialResolvers, ", "))
 
 	dialTimeout := time.Duration(cfg.DialTimeoutSeconds * float64(time.Second))
@@ -374,7 +386,7 @@ func main() {
 
 	// Launch background resolver scanner to dynamically add more healthy resolvers without blocking SOCKS5
 	if len(remainingResolvers) > 0 {
-		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 6)
+		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 8, bank)
 	}
 
 	// Stats reporter
@@ -526,9 +538,31 @@ func probeResolver(addr string, domain string, timeout time.Duration) (bool, tim
 	return true, time.Since(start)
 }
 
-func findInitialResolvers(candidates []string, domain string) ([]string, []string) {
+func findInitialResolvers(candidates []string, domain string, bank *ResolverBank) ([]string, []string) {
 	if len(candidates) <= 2 {
 		return candidates, nil
+	}
+
+	// Prioritize healthy resolvers from persistent ResolverBank
+	if bank != nil {
+		topHealthy := bank.GetTopHealthy(6, 48*time.Hour)
+		if len(topHealthy) > 0 {
+			var reordered []string
+			seen := make(map[string]bool)
+			for _, r := range topHealthy {
+				if !seen[r] {
+					seen[r] = true
+					reordered = append(reordered, r)
+				}
+			}
+			for _, r := range candidates {
+				if !seen[r] {
+					seen[r] = true
+					reordered = append(reordered, r)
+				}
+			}
+			candidates = reordered
+		}
 	}
 
 	type pingRes struct {
@@ -559,11 +593,17 @@ func findInitialResolvers(candidates []string, domain string) ([]string, []strin
 	select {
 	case first := <-foundCh:
 		initial = append(initial, first.addr)
+		if bank != nil {
+			bank.RecordSuccess(first.addr, first.rtt)
+		}
 		logMsg("INFO", "Fast startup: acquired first healthy resolver %s (latency: %v)", first.addr, first.rtt)
 		// If another fast resolver already answered, take it as well
 		select {
 		case second := <-foundCh:
 			initial = append(initial, second.addr)
+			if bank != nil {
+				bank.RecordSuccess(second.addr, second.rtt)
+			}
 		default:
 		}
 	case <-ctx.Done():
@@ -583,7 +623,7 @@ func findInitialResolvers(candidates []string, domain string) ([]string, []strin
 	return initial, remaining
 }
 
-func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClient, remaining []string, domain string, maxTotalResolvers int) {
+func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClient, remaining []string, domain string, maxTotalResolvers int, bank *ResolverBank) {
 	if len(remaining) == 0 {
 		return
 	}
@@ -599,12 +639,18 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 		for i := 0; i < len(remaining); i += batchSize {
 			select {
 			case <-ctx.Done():
+				if bank != nil {
+					_ = bank.Save()
+				}
 				return
 			default:
 			}
 
 			if addedCount >= maxToAdd {
 				logMsg("INFO", "[SCANNER] Target resolver capacity reached (%d healthy paths active). Background scanner complete.", maxTotalResolvers)
+				if bank != nil {
+					_ = bank.Save()
+				}
 				return
 			}
 
@@ -628,17 +674,35 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 			for range batch {
 				select {
 				case res := <-resCh:
-					if res.ok && addedCount < maxToAdd {
-						multiClient.AddResolver(res.addr)
-						addedCount++
-						logMsg("INFO", "[SCANNER] Dynamically added healthy resolver to running core: %s (RTT: %v)", res.addr, res.rtt)
+					if res.ok {
+						if bank != nil {
+							bank.RecordSuccess(res.addr, res.rtt)
+						}
+						if addedCount < maxToAdd {
+							multiClient.AddResolver(res.addr)
+							addedCount++
+							logMsg("INFO", "[SCANNER] Dynamically added healthy resolver to running core: %s (RTT: %v)", res.addr, res.rtt)
+						}
+					} else if bank != nil {
+						bank.RecordFail(res.addr)
 					}
 				case <-ctx.Done():
+					if bank != nil {
+						_ = bank.Save()
+					}
 					return
 				}
 			}
 
+			// Periodic bank save every 5 batches
+			if bank != nil && (i/batchSize)%5 == 0 {
+				_ = bank.Save()
+			}
+
 			time.Sleep(120 * time.Millisecond)
+		}
+		if bank != nil {
+			_ = bank.Save()
 		}
 		logMsg("INFO", "[SCANNER] Finished scanning all candidate resolvers. Added %d verified healthy paths.", addedCount)
 	}()
