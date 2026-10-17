@@ -14,7 +14,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.5";
+        private const string CurrentVersion = "v1.0.6";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -475,9 +475,38 @@ namespace SoarClient
 
         #region Resolvers & Utilities
 
+        private static byte[] BuildDnsQuery(string domain)
+        {
+            domain = domain.Trim().TrimEnd('.');
+            var query = new List<byte> { 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+            foreach (var label in domain.Split('.'))
+            {
+                if (label.Length > 0)
+                {
+                    query.Add((byte)label.Length);
+                    query.AddRange(System.Text.Encoding.ASCII.GetBytes(label));
+                }
+            }
+            query.Add(0x00);
+            query.AddRange(new byte[] { 0x00, 0x06 }); // Type SOA
+            query.AddRange(new byte[] { 0x00, 0x01 }); // Class IN
+            return query.ToArray();
+        }
+
         private void BtnTestResolvers_Click(object sender, RoutedEventArgs e)
         {
-            AppendLog("[RESOLVER] Testing candidate resolvers latency...");
+            string domain = "";
+            if (!string.IsNullOrWhiteSpace(TxtDomains.Text))
+            {
+                var parts = TxtDomains.Text.Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0) domain = parts[0].Trim();
+            }
+            if (string.IsNullOrEmpty(domain))
+            {
+                domain = "google.com";
+            }
+
+            AppendLog($"[RESOLVER] Testing candidate resolvers for {domain} (strictly validating recursion & authority)...");
             var filePath = Path.Combine(AppContext.BaseDirectory, TxtResolversFile.Text.Trim());
             if (!File.Exists(filePath))
             {
@@ -490,7 +519,9 @@ namespace SoarClient
                 var lines = File.ReadAllLines(filePath)
                     .Select(l => l.Trim())
                     .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
-                    .Take(15).ToList();
+                    .Take(25).ToList();
+
+                var query = BuildDnsQuery(domain);
 
                 foreach (var r in lines)
                 {
@@ -501,13 +532,32 @@ namespace SoarClient
                         var host = ep.Split(':')[0];
                         var port = int.Parse(ep.Split(':')[1]);
                         using var client = new System.Net.Sockets.UdpClient();
-                        client.Client.ReceiveTimeout = 1000;
-                        var dummy = new byte[] { 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01 };
-                        client.Send(dummy, dummy.Length, host, port);
+                        client.Client.ReceiveTimeout = 1200;
+                        client.Send(query, query.Length, host, port);
                         var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
-                        client.Receive(ref remote);
+                        var resp = client.Receive(ref remote);
                         sw.Stop();
-                        Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
+
+                        if (resp.Length < 12)
+                        {
+                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> Bad response (<12 bytes)"));
+                            continue;
+                        }
+
+                        bool qr = (resp[2] & 0x80) != 0;
+                        bool ra = (resp[3] & 0x80) != 0;
+                        int rcode = resp[3] & 0x0F;
+                        int an = (resp[6] << 8) | resp[7];
+                        int ns = (resp[8] << 8) | resp[9];
+
+                        if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0))
+                        {
+                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> Rejected (RA={ra}, RCODE={rcode})"));
+                        }
+                        else
+                        {
+                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
+                        }
                     }
                     catch
                     {

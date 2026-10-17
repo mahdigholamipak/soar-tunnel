@@ -348,8 +348,12 @@ func (c *Client) addPathLocked(r string) error {
 func (c *Client) AddResolver(r string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	before := len(c.paths)
 	err := c.addPathLocked(r)
 	if err == nil {
+		for _, p := range c.paths[before:] {
+			p.candidate = true
+		}
 		c.wake()
 	}
 	return err
@@ -369,6 +373,24 @@ func (c *Client) newPath(ua *net.UDPAddr, tcp bool) *path {
 		p.tcp = c.startTCP(ua.String())
 	}
 	return p
+}
+
+// pruneCandidatesLocked drops unverified candidate paths that failed repeatedly without answering.
+func (c *Client) pruneCandidatesLocked(now time.Time) {
+	if len(c.paths) <= 1 {
+		return
+	}
+	kept := c.paths[:0]
+	for _, p := range c.paths {
+		if p.candidate && !p.verified && (p.outN >= 3 && p.inflight == 0 || (p.tcp != nil && now.Sub(p.created) > 10*time.Second)) {
+			if p.tcp != nil {
+				p.tcp.stop()
+			}
+			continue
+		}
+		kept = append(kept, p)
+	}
+	c.paths = kept
 }
 
 // addTCPSiblingsLocked gives a TCP path to each resolver whose UDP path has failed repeatedly
@@ -492,6 +514,7 @@ func (c *Client) run() {
 		c.expireLocked(now)
 		c.checkLivenessLocked(now)
 		c.discoverLocked(now)
+		c.pruneCandidatesLocked(now)
 		c.addTCPSiblingsLocked()
 		c.fillLocked(now)
 		if debugOn && now.Sub(c.lastDump) > 250*time.Millisecond {
@@ -956,8 +979,12 @@ func (c *Client) fillLocked(now time.Time) {
 func (c *Client) pickPathLocked(now time.Time, exclude *path) *path {
 	var best *path
 	var bestScore float64
+	hasVerified := c.anyUsableLocked(now)
 	for _, p := range c.paths {
 		if p == exclude {
+			continue
+		}
+		if hasVerified && !p.verified {
 			continue
 		}
 		if !p.usable(now) || float64(p.inflight) >= p.cwnd || (!p.verified && p.inflight > 0) {

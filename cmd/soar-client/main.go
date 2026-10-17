@@ -339,7 +339,8 @@ func main() {
 	logMsg("INFO", "Loaded resolvers: %d candidate IPs", len(resolvers))
 
 	// Fast startup: acquire first healthy resolver(s) immediately; remaining resolvers scanned concurrently in background
-	initialResolvers, remainingResolvers := findInitialResolvers(resolvers)
+	primaryDomain := cfg.Domains[0]
+	initialResolvers, remainingResolvers := findInitialResolvers(resolvers, primaryDomain)
 	logMsg("INFO", "Engine starting with initial healthy resolver(s): %s", strings.Join(initialResolvers, ", "))
 
 	dialTimeout := time.Duration(cfg.DialTimeoutSeconds * float64(time.Second))
@@ -373,7 +374,7 @@ func main() {
 
 	// Launch background resolver scanner to dynamically add more healthy resolvers without blocking SOCKS5
 	if len(remainingResolvers) > 0 {
-		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, 10)
+		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 6)
 	}
 
 	// Stats reporter
@@ -468,14 +469,34 @@ func loadResolvers(filename string) []string {
 	return nil
 }
 
-func probeResolver(addr string, timeout time.Duration) (bool, time.Duration) {
-	dnsQuery := []byte{
-		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x06, 'g', 'o', 'o', 'g', 'l', 'e',
-		0x03, 'c', 'o', 'm', 0x00,
-		0x00, 0x01, 0x00, 0x01,
+func buildSOAQuery(domain string) []byte {
+	domain = strings.TrimSpace(domain)
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimPrefix(domain, "https://")
+	domain = strings.TrimSuffix(domain, ".")
+	if domain == "" {
+		domain = "google.com"
 	}
+
+	buf := make([]byte, 0, 64)
+	buf = append(buf, 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+
+	parts := strings.Split(domain, ".")
+	for _, p := range parts {
+		if len(p) > 0 {
+			buf = append(buf, byte(len(p)))
+			buf = append(buf, []byte(p)...)
+		}
+	}
+	buf = append(buf, 0x00)
+	buf = append(buf, 0x00, 0x06) // Type SOA
+	buf = append(buf, 0x00, 0x01) // Class IN
+
+	return buf
+}
+
+func probeResolver(addr string, domain string, timeout time.Duration) (bool, time.Duration) {
+	query := buildSOAQuery(domain)
 	start := time.Now()
 	conn, err := net.DialTimeout("udp", addr, timeout)
 	if err != nil {
@@ -483,17 +504,29 @@ func probeResolver(addr string, timeout time.Duration) (bool, time.Duration) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write(dnsQuery); err != nil {
+	if _, err := conn.Write(query); err != nil {
 		return false, 0
 	}
 	var reply [512]byte
-	if _, err := conn.Read(reply[:]); err != nil {
+	n, err := conn.Read(reply[:])
+	if err != nil || n < 12 {
 		return false, 0
 	}
+
+	qr := (reply[2] & 0x80) != 0
+	ra := (reply[3] & 0x80) != 0
+	rcode := reply[3] & 0x0F
+	an := (int(reply[6]) << 8) | int(reply[7])
+	ns := (int(reply[8]) << 8) | int(reply[9])
+
+	if !qr || !ra || rcode != 0 || (an == 0 && ns == 0) {
+		return false, 0
+	}
+
 	return true, time.Since(start)
 }
 
-func findInitialResolvers(candidates []string) ([]string, []string) {
+func findInitialResolvers(candidates []string, domain string) ([]string, []string) {
 	if len(candidates) <= 2 {
 		return candidates, nil
 	}
@@ -504,15 +537,15 @@ func findInitialResolvers(candidates []string) ([]string, []string) {
 	}
 	foundCh := make(chan pingRes, len(candidates))
 
-	// Rapid parallel probe on the first batch of candidates with a 650ms timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	// Rapid parallel probe on the first batch of candidates with a 750ms timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 850*time.Millisecond)
 	defer cancel()
 
-	probeCount := min(len(candidates), 10)
+	probeCount := min(len(candidates), 15)
 	for i := 0; i < probeCount; i++ {
 		addr := candidates[i]
 		go func(a string) {
-			ok, rtt := probeResolver(a, 650*time.Millisecond)
+			ok, rtt := probeResolver(a, domain, 750*time.Millisecond)
 			if ok {
 				select {
 				case foundCh <- pingRes{addr: a, rtt: rtt}:
@@ -550,7 +583,7 @@ func findInitialResolvers(candidates []string) ([]string, []string) {
 	return initial, remaining
 }
 
-func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClient, remaining []string, maxTotalResolvers int) {
+func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClient, remaining []string, domain string, maxTotalResolvers int) {
 	if len(remaining) == 0 {
 		return
 	}
@@ -560,7 +593,7 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 		addedCount := 0
 		maxToAdd := maxTotalResolvers - 2
 		if maxToAdd <= 0 {
-			maxToAdd = 8
+			maxToAdd = 4
 		}
 
 		for i := 0; i < len(remaining); i += batchSize {
@@ -587,7 +620,7 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 
 			for _, addr := range batch {
 				go func(a string) {
-					ok, rtt := probeResolver(a, 850*time.Millisecond)
+					ok, rtt := probeResolver(a, domain, 850*time.Millisecond)
 					resCh <- batchRes{addr: a, rtt: rtt, ok: ok}
 				}(addr)
 			}

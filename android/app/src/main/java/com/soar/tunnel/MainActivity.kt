@@ -276,23 +276,49 @@ class MainActivity : AppCompatActivity() {
         scannedHealthyResults.clear()
         scannedTotalCount = list.size
 
+        val domainsText = binding.etDomains.text.toString().trim()
+        val targetDomain = domainsText.split(",", ";", "\n")
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() } ?: ""
+
+        val probeTargetName = if (targetDomain.isNotEmpty()) targetDomain else "google.com"
         binding.btnTestResolvers.text = "Stop Test"
-        Toast.makeText(this, "Testing ${list.size} resolvers in parallel...", Toast.LENGTH_SHORT).show()
-        binding.tvLogs.append("\n[TEST] Probing ${list.size} resolvers concurrently...\n")
+        Toast.makeText(this, "Testing ${list.size} resolvers for $probeTargetName...", Toast.LENGTH_SHORT).show()
+        binding.tvLogs.append("\n[TEST] Probing ${list.size} resolvers for $probeTargetName (strictly validating recursion & authority)...\n")
 
         scanJob = CoroutineScope(Dispatchers.IO).launch {
-            // Standard DNS Query for google.com (A record)
-            val dnsQuery = byteArrayOf(
-                0x12, 0x34,
-                0x01, 0x00,
-                0x00, 0x01,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x06, 'g'.code.toByte(), 'o'.code.toByte(), 'o'.code.toByte(), 'g'.code.toByte(), 'l'.code.toByte(), 'e'.code.toByte(),
-                0x03, 'c'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte(),
-                0x00,
-                0x00, 0x01,
-                0x00, 0x01
-            )
+            val dnsQuery = if (targetDomain.isNotEmpty()) {
+                val q = mutableListOf<Byte>(
+                    0x12, 0x34,
+                    0x01, 0x00,
+                    0x00, 0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                )
+                for (part in targetDomain.split(".")) {
+                    if (part.isNotEmpty()) {
+                        q.add(part.length.toByte())
+                        for (c in part) {
+                            q.add(c.code.toByte())
+                        }
+                    }
+                }
+                q.add(0x00) // null root label
+                q.add(0x00); q.add(0x06) // Type SOA
+                q.add(0x00); q.add(0x01) // Class IN
+                q.toByteArray()
+            } else {
+                byteArrayOf(
+                    0x12, 0x34,
+                    0x01, 0x00,
+                    0x00, 0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x06, 'g'.code.toByte(), 'o'.code.toByte(), 'o'.code.toByte(), 'g'.code.toByte(), 'l'.code.toByte(), 'e'.code.toByte(),
+                    0x03, 'c'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte(),
+                    0x00,
+                    0x00, 0x01,
+                    0x00, 0x01
+                )
+            }
 
             val chunks = list.chunked(10)
 
@@ -317,6 +343,26 @@ class MainActivity : AppCompatActivity() {
                             socket.receive(recvPacket)
                             val elapsed = System.currentTimeMillis() - startTime
                             socket.close()
+
+                            if (recvPacket.length < 12) {
+                                withContext(Dispatchers.Main) {
+                                    binding.tvLogs.append("[BAD] $r (short response)\n")
+                                }
+                                return@async
+                            }
+
+                            val qr = (buf[2].toInt() and 0x80) != 0
+                            val ra = (buf[3].toInt() and 0x80) != 0
+                            val rcode = buf[3].toInt() and 0x0F
+                            val an = ((buf[6].toInt() and 0xFF) shl 8) or (buf[7].toInt() and 0xFF)
+                            val ns = ((buf[8].toInt() and 0xFF) shl 8) or (buf[9].toInt() and 0xFF)
+
+                            if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0)) {
+                                withContext(Dispatchers.Main) {
+                                    binding.tvLogs.append("[REJECTED] $r (RA=$ra, RCODE=$rcode)\n")
+                                }
+                                return@async
+                            }
 
                             scannedHealthyResults.add(Pair(r, elapsed))
                             withContext(Dispatchers.Main) {
@@ -398,7 +444,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.5\n\n" +
+                "SOAR DNS TUNNEL v1.0.6\n\n" +
                 "Protocol Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
