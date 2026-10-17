@@ -177,30 +177,66 @@ else
     done
 fi
 
+# 8. Check Port 53 UDP Availability & CottenRouter Co-existence
+LISTEN_PORT=53
+LISTEN_ADDR=":53"
+BEHIND_COTTEN=false
+
+# Auto-detect CottenRouter
+if pgrep -x "cottenrouter" >/dev/null 2>&1 || systemctl is-active --quiet cottenrouter 2>/dev/null || [ -d "/etc/cottenrouter" ]; then
+    echo -e "${MAGENTA}[DETECT] CottenRouter DNS reverse proxy detected on this system!${NC}"
+    BEHIND_COTTEN=true
+fi
+
+if echo "$*" | grep -q -- "--cotten"; then
+    BEHIND_COTTEN=true
+fi
+
+if ss -lupn | grep -q ":53 "; then
+    CONFLICT_PROC=$(ss -lupn | grep ":53 " | head -n 1)
+    echo -e "${YELLOW}[WARN] UDP port 53 is already in use:${NC}"
+    echo -e "       $CONFLICT_PROC"
+    
+    if [ "$BEHIND_COTTEN" = true ] || echo "$CONFLICT_PROC" | grep -qi "cottenrouter"; then
+        BEHIND_COTTEN=true
+        echo -e "${GREEN}[INFO] CottenRouter co-existence active: binding Soar to 127.0.0.1:5303.${NC}"
+        echo -e "${GREEN}[INFO] Preserving port 53 exclusively for CottenRouter (no iptables redirect).${NC}"
+        LISTEN_PORT=5303
+        LISTEN_ADDR="127.0.0.1:5303"
+        # Clean up any previous conflicting iptables redirect
+        iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
+    else
+        echo -e "${YELLOW}Is port 53 used by CottenRouter or another DNS reverse proxy?${NC}"
+        read -r -p "Run in reverse-proxy co-existence mode (127.0.0.1:5303 without iptables hijacking)? [y/N]: " PROXY_CHOICE
+        if [[ "$PROXY_CHOICE" =~ ^[Yy]$ ]]; then
+            BEHIND_COTTEN=true
+            LISTEN_PORT=5303
+            LISTEN_ADDR="127.0.0.1:5303"
+            echo -e "${GREEN}[OK] Configured for DNS reverse proxy co-existence (127.0.0.1:5303).${NC}"
+            iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
+        else
+            echo -e "${BLUE}[INFO] Configuring Soar on port 5303 with iptables UDP:53 redirection...${NC}"
+            LISTEN_PORT=5303
+            LISTEN_ADDR=":5303"
+            iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
+            iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303
+        fi
+    fi
+elif [ "$BEHIND_COTTEN" = true ]; then
+    LISTEN_PORT=5303
+    LISTEN_ADDR="127.0.0.1:5303"
+    echo -e "${GREEN}[OK] CottenRouter mode specified: binding to 127.0.0.1:5303.${NC}"
+fi
+
 # Save config info
 cat <<EOF > "$CONF_PATH"
 SERVER_IP="$SERVER_IP"
 ZONES="$ZONES"
 PUB_KEY="$PUB_KEY"
+LISTEN_ADDR="$LISTEN_ADDR"
+BEHIND_COTTEN="$BEHIND_COTTEN"
 EOF
 chmod 600 "$CONF_PATH"
-
-# 8. Check Port 53 UDP Availability
-LISTEN_PORT=53
-PORT_CONFLICT=false
-
-if ss -lupn | grep -q ":53 "; then
-    PORT_CONFLICT=true
-    CONFLICT_PROC=$(ss -lupn | grep ":53 " | head -n 1)
-    echo -e "${YELLOW}[WARN] UDP port 53 is already used by another process:${NC}"
-    echo -e "       $CONFLICT_PROC"
-    echo -e "${BLUE}[INFO] Configuring Soar to listen on port 5303 and setting up iptables UDP:53 redirection...${NC}"
-    LISTEN_PORT=5303
-
-    # Setup iptables redirect
-    iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
-    iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303
-fi
 
 # Open firewall if ufw is active
 if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
@@ -218,7 +254,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=$BIN_PATH -zones "$ZONES" -key-file "$KEY_PATH" -listen ":$LISTEN_PORT"
+ExecStart=$BIN_PATH -zones "$ZONES" -key-file "$KEY_PATH" -listen "$LISTEN_ADDR"
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -302,8 +338,31 @@ show_status() {
     echo -e "Server Public IP:   ${GREEN}${SERVER_IP:-Unknown}${NC}"
     echo -e "Tunnel Domains:     ${GREEN}${ZONES:-None}${NC}"
     echo -e "Public Key:         ${GREEN}${PUB_KEY:-Unknown}${NC}"
+    echo -e "Listen Address:     ${GREEN}${LISTEN_ADDR:-:$LISTEN_PORT}${NC}"
+    if [ "$BEHIND_COTTEN" = "true" ]; then
+        echo -e "CottenRouter Mode:  ${MAGENTA}ACTIVE (Loopback 127.0.0.1:5303)${NC}"
+    fi
     echo -e "Systemd Service:    soar.service"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
+}
+
+show_cotten() {
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${MAGENTA}       CottenRouter Configuration Snippet            ${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "Add this routing rule to your CottenRouter config file"
+    echo -e "(usually /etc/cottenrouter/config.json) or enter via 'cottenrouter tui':"
+    echo ""
+    for zone in $(echo "$ZONES" | tr ',' ' '); do
+        echo -e "  {"
+        echo -e "    \"suffix\": \"${zone}\","
+        echo -e "    \"address\": \"127.0.0.1:5303\""
+        echo -e "  },"
+    done
+    echo ""
+    echo -e "After updating config.json, restart CottenRouter:"
+    echo -e "${GREEN}systemctl restart cottenrouter${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
 }
 
 show_share() {
@@ -400,6 +459,9 @@ case "$1" in
     share-locked|locked)
         show_locked_share
         ;;
+    cotten)
+        show_cotten
+        ;;
     qr)
         print_qr "$(build_standard_link)"
         ;;
@@ -421,9 +483,10 @@ case "$1" in
         echo -e "6) Show Standard Connection Link & QR"
         echo -e "7) Show Privacy-Protected Locked Link (Hidden Domain)"
         echo -e "8) Update Server to Latest GitHub Release"
+        echo -e "9) Show CottenRouter Configuration Snippet"
         echo -e "0) Exit"
         echo -e "${CYAN}=====================================================${NC}"
-        read -r -p "Select option [0-8]: " OPT
+        read -r -p "Select option [0-9]: " OPT
         case "$OPT" in
             1) show_status ;;
             2) journalctl -u soar -f ;;
@@ -433,6 +496,7 @@ case "$1" in
             6) show_share ;;
             7) show_locked_share ;;
             8) update_server ;;
+            9) show_cotten ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
@@ -455,12 +519,28 @@ echo -e "${YELLOW}Server Details:${NC}"
 echo -e "   - Public IP:       ${GREEN}$SERVER_IP${NC}"
 echo -e "   - Tunnel Zones:    ${GREEN}$ZONES${NC}"
 echo -e "   - Server PubKey:   ${GREEN}$PUB_KEY${NC}"
-echo -e "   - Listen UDP Port: ${GREEN}:$LISTEN_PORT${NC}"
+echo -e "   - Listen Address:  ${GREEN}$LISTEN_ADDR${NC}"
+if [ "$BEHIND_COTTEN" = true ]; then
+    echo -e "   - Routing Mode:    ${MAGENTA}CottenRouter Co-existence (127.0.0.1:5303)${NC}"
+    echo ""
+    echo -e "${MAGENTA}>>> CottenRouter Setup Action Required <<<${NC}"
+    echo -e "Add the following rule to ${YELLOW}/etc/cottenrouter/config.json${NC} (or via ${YELLOW}cottenrouter tui${NC}):"
+    echo ""
+    for zone in $(echo "$ZONES" | tr ',' ' '); do
+        echo -e "  {"
+        echo -e "    \"suffix\": \"${zone}\","
+        echo -e "    \"address\": \"127.0.0.1:5303\""
+        echo -e "  },"
+    done
+    echo ""
+    echo -e "Then restart CottenRouter: ${GREEN}systemctl restart cottenrouter${NC}"
+fi
 echo ""
 echo -e "${YELLOW}Quick Management:${NC}"
 echo -e "   - Open Control Menu:     ${GREEN}soar${NC}"
 echo -e "   - Show Client Link & QR: ${GREEN}soar share${NC}"
 echo -e "   - Privacy-Protected Link:${GREEN}soar share-locked${NC}"
+echo -e "   - CottenRouter Snippet:  ${GREEN}soar cotten${NC}"
 echo -e "   - One-Line Auto Update:  ${GREEN}soar update${NC}"
 echo ""
 echo -e "${CYAN}=====================================================${NC}"

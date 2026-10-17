@@ -173,6 +173,32 @@ curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scr
 
 ---
 
+### 🔀 همزیستی با CottenRouter (اجرای همزمان چند تونل DNS روی سرور)
+
+اگر روی سرور خود از **CottenRouter** به عنوان پروکسی معکوس پورت ۵۳ استفاده می‌کنید تا چندین سرویس مختلف (مانند CottenDNS، SlipGate و Soar) را همزمان داشته باشید:
+
+1. **نصب مستقیم و هماهنگ:**
+   اسکریپت نصب به صورت خودکار وجود CottenRouter را تشخیص داده و سرور Soar را روی آدرس محلی `127.0.0.1:5303` بدون دستکاری ریدایرکت‌های iptables تنظیم می‌کند:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scripts/install.sh | bash -s -- --cotten
+   ```
+2. **ثبت قانون در CottenRouter:**
+   قانون زیر را در فایل `/etc/cottenrouter/config.json` (یا از طریق منوی `cottenrouter tui`) قرار دهید:
+   ```json
+   {
+     "suffix": "s.example.com",
+     "address": "127.0.0.1:5303"
+   }
+   ```
+   و سپس کاتن‌روتر را راه‌اندازی مجدد کنید:
+   ```bash
+   systemctl restart cottenrouter
+   ```
+3. **کلاینت‌ها بدون نیاز به تغییر:**
+   کلاینت‌های اندروید و ویندوز هیچ نیازی به تغییر پورت ندارند و ترافیک از طریق پورت ۵۳ عمومی کاتن‌روتر به راحتی به Soar منتقل می‌شود.
+
+---
+
 ## 🙏 اعتبار و سازنده اصلی (Credits & Attribution)
 
 این پروژه مستقیماً بر پایه پروتکل قدرتمند و تاب‌آور **Soar** که توسط تیم مهندسی **Lantern** ([github.com/getlantern/soar](https://github.com/getlantern/soar)) تحت مجوز Apache License 2.0 ابداع و متن‌باز شده است، طراحی و پیاده‌سازی گردیده است. با سپاس و قدردانی فراوان از تیم Lantern برای تحقیقات درخشان در زمینه دور زدن فیلترینگ اینترنت و انتقال مقاوم داده بر بستر پروتکل DNS.

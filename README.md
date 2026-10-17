@@ -170,6 +170,28 @@ curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scr
 
 ---
 
+### 🔀 Co-existence with CottenRouter (Running Multiple DNS Tunnels)
+
+If you use [CottenRouter](https://github.com/TaJirax/CottenRouter) as a DNS reverse proxy on port 53 to host multiple DNS tunneling services concurrently:
+
+1. **Native Co-existence Mode:**
+   The installer automatically detects CottenRouter and binds Soar strictly to loopback `127.0.0.1:5303` without adding iptables port 53 redirects:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scripts/install.sh | bash -s -- --cotten
+   ```
+2. **Add Route to CottenRouter:**
+   Add this rule to `/etc/cottenrouter/config.json` (or via `cottenrouter tui`):
+   ```json
+   {
+     "suffix": "s.example.com",
+     "address": "127.0.0.1:5303"
+   }
+   ```
+   Then reload CottenRouter: `systemctl restart cottenrouter`.
+3. **Clients unchanged:** Windows and Android clients continue to communicate via standard DNS ports without needing any custom port configuration.
+
+---
+
 ## 🙏 Credits & Attribution
 
 This project is built directly upon the core **Soar** loss-tolerant DNS tunneling protocol invented and open-sourced by **Lantern** ([github.com/getlantern/soar](https://github.com/getlantern/soar)) under the Apache License 2.0. We deeply appreciate the Lantern engineering team for their groundbreaking research in censorship evasion and loss-tolerant transport over DNS.
