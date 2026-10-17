@@ -27,8 +27,9 @@ namespace SoarClient
             try
             {
                 var lines = File.ReadAllLines(path);
-                foreach (var rawLine in lines)
+                for (int i = 0; i < lines.Length; i++)
                 {
+                    var rawLine = lines[i];
                     var line = rawLine.Trim();
                     if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#") || line.StartsWith(";"))
                         continue;
@@ -41,6 +42,21 @@ namespace SoarClient
                     if (val.Contains('#'))
                     {
                         val = val.Substring(0, val.IndexOf('#')).Trim();
+                    }
+
+                    // Handle multiline array (e.g. DOMAINS = [\n "domain1",\n "domain2"\n])
+                    if (val.StartsWith("[") && !val.Contains("]"))
+                    {
+                        var arrayBuilder = new StringBuilder(val);
+                        while (++i < lines.Length)
+                        {
+                            var nextLine = lines[i].Trim();
+                            if (nextLine.Contains('#'))
+                                nextLine = nextLine.Substring(0, nextLine.IndexOf('#')).Trim();
+                            arrayBuilder.Append(" ").Append(nextLine);
+                            if (nextLine.Contains("]")) break;
+                        }
+                        val = arrayBuilder.ToString();
                     }
 
                     switch (key)
@@ -117,7 +133,7 @@ namespace SoarClient
 
         private static string Clean(string s)
         {
-            return s.Trim().Trim('"', '\'').Trim();
+            return s.Trim().Trim('"', '\'', '[', ']').Trim();
         }
 
         private static List<string> ParseArray(string s)
@@ -127,7 +143,7 @@ namespace SoarClient
             if (s.StartsWith("[") && s.EndsWith("]"))
                 s = s.Substring(1, s.Length - 2);
 
-            var items = s.Split(',');
+            var items = s.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var item in items)
             {
                 var c = Clean(item);

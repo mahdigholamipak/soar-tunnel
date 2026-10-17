@@ -61,6 +61,19 @@ func LoadConfigFile(path string) (ClientConfig, error) {
 			val = strings.TrimSpace(val[:idx])
 		}
 
+		if strings.HasPrefix(val, "[") && !strings.Contains(val, "]") {
+			for sc.Scan() {
+				nextLine := strings.TrimSpace(sc.Text())
+				if idx := strings.Index(nextLine, "#"); idx != -1 {
+					nextLine = strings.TrimSpace(nextLine[:idx])
+				}
+				val += " " + nextLine
+				if strings.Contains(nextLine, "]") {
+					break
+				}
+			}
+		}
+
 		switch key {
 		case "DOMAINS":
 			cfg.Domains = parseStringArray(val)

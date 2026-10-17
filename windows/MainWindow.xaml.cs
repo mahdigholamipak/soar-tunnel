@@ -30,13 +30,22 @@ namespace SoarClient
 
         private void LocateAndLoadConfig()
         {
-            var candidates = new[]
+            var appDir = AppContext.BaseDirectory;
+            var procDir = Path.GetDirectoryName(Environment.ProcessPath) ?? appDir;
+            var currentDir = Directory.GetCurrentDirectory();
+
+            var searchDirs = new[] { procDir, appDir, currentDir }.Distinct();
+            var fileNames = new[] { "client_config.toml", "config.toml", "client_config.sample.toml" };
+
+            var candidates = new List<string>();
+            foreach (var dir in searchDirs)
             {
-                "client_config.toml",
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client_config.toml"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "client_config.toml"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "configs", "client_config.sample.toml")
-            };
+                foreach (var file in fileNames)
+                {
+                    candidates.Add(Path.Combine(dir, file));
+                }
+            }
+            candidates.Add("client_config.toml");
 
             foreach (var path in candidates)
             {
@@ -51,10 +60,12 @@ namespace SoarClient
                     TxtListenIP.Text = cfg.ListenIP;
                     TxtListenPort.Text = cfg.ListenPort.ToString();
                     TxtResolversFile.Text = cfg.ResolversFile;
-                    AppendLog($"[CONFIG] Loaded settings from {Path.GetFileName(path)}");
-                    break;
+                    AppendLog($"[CONFIG] Loaded settings from: {path}");
+                    return;
                 }
             }
+
+            AppendLog("[CONFIG] No existing config file found. Please enter your settings.");
         }
 
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
@@ -102,8 +113,10 @@ namespace SoarClient
                 ListenPort = port,
                 ResolversFile = resolvers
             };
-            ConfigManager.Save("client_config.toml", cfg);
-            _configPath = "client_config.toml";
+            var appDir = AppContext.BaseDirectory;
+            var targetPath = Path.Combine(appDir, "client_config.toml");
+            ConfigManager.Save(targetPath, cfg);
+            _configPath = targetPath;
 
             // Locate soar-client binary
             var binCandidates = new[]
@@ -270,6 +283,8 @@ namespace SoarClient
 
         private void BtnSaveConfig_Click(object sender, RoutedEventArgs e)
         {
+            var appDir = AppContext.BaseDirectory;
+            var targetPath = Path.Combine(appDir, "client_config.toml");
             var cfg = new ClientConfigModel
             {
                 ServerPublicKey = TxtServerKey.Text.Trim(),
@@ -278,8 +293,9 @@ namespace SoarClient
                 ListenPort = int.TryParse(TxtListenPort.Text.Trim(), out var p) ? p : 10850,
                 ResolversFile = TxtResolversFile.Text.Trim()
             };
-            ConfigManager.Save("client_config.toml", cfg);
-            AppendLog("[CONFIG] Saved configuration to client_config.toml");
+            ConfigManager.Save(targetPath, cfg);
+            _configPath = targetPath;
+            AppendLog($"[CONFIG] Saved configuration to: {targetPath}");
             MessageBox.Show("Configuration saved successfully!", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 

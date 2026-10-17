@@ -127,40 +127,29 @@ object TunnelProcessManager {
     }
 
     private fun getOrExtractBinary(context: Context): File? {
-        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-        val archName = when {
-            abi.contains("arm64") -> "soar-client-arm64"
-            abi.contains("armeabi") -> "soar-client-arm"
-            abi.contains("x86_64") -> "soar-client-amd64"
-            else -> "soar-client-arm64"
-        }
-
-        val targetFile = File(context.filesDir, "soar-client")
-        // Check if already extracted
-        if (targetFile.exists() && targetFile.length() > 0) {
-            return targetFile
-        }
-
-        // Try extracting from assets
-        try {
-            context.assets.open(archName).use { input ->
-                FileOutputStream(targetFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            targetFile.setExecutable(true, false)
-            return targetFile
-        } catch (e: Exception) {
-            Log.w(TAG, "Asset $archName not found, checking lib directory...")
-        }
-
-        // Check native library dir (if packaged as .so)
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
         val libFile = File(nativeDir, "libsoar.so")
         if (libFile.exists()) {
+            try {
+                libFile.setExecutable(true, false)
+            } catch (e: Exception) { }
+            log("[INIT] Located native library executable: ${libFile.absolutePath}")
             return libFile
         }
 
-        return targetFile
+        // Secondary check: look for any executable in nativeLibraryDir
+        val filesInLib = nativeDir.listFiles()
+        if (filesInLib != null) {
+            for (f in filesInLib) {
+                if (f.name.contains("soar") || f.name.endsWith(".so")) {
+                    try { f.setExecutable(true, false) } catch (e: Exception) { }
+                    log("[INIT] Located candidate in nativeLibraryDir: ${f.absolutePath}")
+                    return f
+                }
+            }
+        }
+
+        log("[ERROR] Native executable libsoar.so not found in ${nativeDir.absolutePath}")
+        return null
     }
 }

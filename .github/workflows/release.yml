@@ -75,6 +75,7 @@ jobs:
           dotnet publish windows/SoarClient.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o build_win
           Copy-Item dist/soar-client-windows-amd64.exe -Destination build_win/soar-client.exe
           Copy-Item configs/client_config.sample.toml -Destination build_win/client_config.sample.toml
+          Copy-Item configs/client_config.sample.toml -Destination build_win/client_config.toml
           Copy-Item configs/client_resolvers.sample.txt -Destination build_win/client_resolvers.txt
           Compress-Archive -Path build_win/* -DestinationPath dist/Soar-Windows-GUI-win64.zip -Force
 
@@ -104,10 +105,16 @@ jobs:
           name: core-binaries
           path: dist
 
-      - name: Bundle Android Binaries into Assets
+      - name: Bundle Android Binaries into JniLibs
         run: |
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p android/app/src/main/jniLibs/x86_64
+          cp dist/android-assets/soar-client-arm64 android/app/src/main/jniLibs/arm64-v8a/libsoar.so
+          cp dist/android-assets/soar-client-arm android/app/src/main/jniLibs/armeabi-v7a/libsoar.so
+          cp dist/android-assets/soar-client-amd64 android/app/src/main/jniLibs/x86_64/libsoar.so
+          chmod +x android/app/src/main/jniLibs/*/libsoar.so
           mkdir -p android/app/src/main/assets
-          cp dist/android-assets/* android/app/src/main/assets/
           cp configs/client_resolvers.sample.txt android/app/src/main/assets/client_resolvers.txt
 
       - name: Setup Gradle
