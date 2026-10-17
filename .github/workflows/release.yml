@@ -112,11 +112,14 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+          cache-disabled: true
 
       - name: Build Android APK
         working-directory: android
         run: |
-          gradle assembleDebug --no-daemon
+          gradle assembleDebug --no-daemon --stacktrace
           mkdir -p ../dist-apk
           cp app/build/outputs/apk/debug/app-debug.apk ../dist-apk/Soar-Android-ProxyOnly.apk
 

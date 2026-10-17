@@ -1,0 +1,12 @@
+#!/bin/sh
+# Universal gradlew launcher
+APP_HOME="$(cd "$(dirname "$0")" && pwd)"
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$APP_HOME/.gradle}"
+
+# Try system gradle first if available, else download or use wrapper jar
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+else
+    echo "gradle not found on PATH" >&2
+    exit 1
+fi
