@@ -118,6 +118,15 @@ func (m *MultiClient) AddResolver(r string) {
 	}
 }
 
+// SetPathEDNS updates the advertised EDNS0 buffer size for a resolver path across all clients.
+func (m *MultiClient) SetPathEDNS(addr string, ednsSize uint16) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, e := range m.clients {
+		e.client.SetPathEDNS(addr, ednsSize)
+	}
+}
+
 func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn, string, error) {
 	m.mu.RLock()
 	count := len(m.clients)
@@ -389,6 +398,9 @@ func main() {
 		startBackgroundResolverScanner(ctx, multiClient, remainingResolvers, primaryDomain, 16, bank)
 	}
 
+	// Launch background chaff traffic generator for DPI resistance (Proposal 5)
+	startChaffTrafficGenerator(ctx, 20*time.Second)
+
 	// Stats reporter
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
@@ -482,6 +494,10 @@ func loadResolvers(filename string) []string {
 }
 
 func buildSOAQuery(domain string) []byte {
+	return buildSOAQueryWithEDNS(domain, 1232)
+}
+
+func buildSOAQueryWithEDNS(domain string, ednsSize uint16) []byte {
 	domain = strings.TrimSpace(domain)
 	domain = strings.TrimPrefix(domain, "http://")
 	domain = strings.TrimPrefix(domain, "https://")
@@ -490,8 +506,14 @@ func buildSOAQuery(domain string) []byte {
 		domain = "google.com"
 	}
 
-	buf := make([]byte, 0, 64)
-	buf = append(buf, 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	arCount := byte(0x00)
+	if ednsSize > 0 {
+		arCount = 0x01
+	}
+
+	buf := make([]byte, 0, 75)
+	// Header: ID=0x1234, RD=1, QDCOUNT=1, AN=0, NS=0, AR=arCount
+	buf = append(buf, 0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, arCount)
 
 	parts := strings.Split(domain, ".")
 	for _, p := range parts {
@@ -504,11 +526,43 @@ func buildSOAQuery(domain string) []byte {
 	buf = append(buf, 0x00, 0x06) // Type SOA
 	buf = append(buf, 0x00, 0x01) // Class IN
 
+	// Optional EDNS0 OPT RR (Type 41)
+	if ednsSize > 0 {
+		buf = append(buf, 0x00)                                   // root name
+		buf = append(buf, 0x00, 0x29)                            // Type OPT (41)
+		buf = binary.BigEndian.AppendUint16(buf, ednsSize)       // Class = UDP payload size
+		buf = append(buf, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00) // Ext RCODE & Flags & RDLEN=0
+	}
+
 	return buf
 }
 
 func probeResolver(addr string, domain string, timeout time.Duration) (bool, time.Duration) {
-	query := buildSOAQuery(domain)
+	ok, rtt, _ := probeResolverWithEDNS(addr, domain, timeout)
+	return ok, rtt
+}
+
+func probeResolverWithEDNS(addr string, domain string, timeout time.Duration) (bool, time.Duration, int) {
+	// 1. Probe with EDNS0 1232 (DNS Flag Day standard)
+	ok, rtt := probeResolverSingle(addr, domain, 1232, timeout)
+	if ok {
+		// Probe if resolver supports large EDNS0 buffer 1400
+		ok1400, _ := probeResolverSingle(addr, domain, 1400, min(timeout, 350*time.Millisecond))
+		if ok1400 {
+			return true, rtt, 1400
+		}
+		return true, rtt, 1232
+	}
+	// 2. Fallback to standard 512 without EDNS
+	ok512, rtt512 := probeResolverSingle(addr, domain, 0, timeout)
+	if ok512 {
+		return true, rtt512, 512
+	}
+	return false, 0, 0
+}
+
+func probeResolverSingle(addr string, domain string, ednsSize uint16, timeout time.Duration) (bool, time.Duration) {
+	query := buildSOAQueryWithEDNS(domain, ednsSize)
 	start := time.Now()
 	conn, err := net.DialTimeout("udp", addr, timeout)
 	if err != nil {
@@ -519,7 +573,7 @@ func probeResolver(addr string, domain string, timeout time.Duration) (bool, tim
 	if _, err := conn.Write(query); err != nil {
 		return false, 0
 	}
-	var reply [512]byte
+	var reply [1500]byte
 	n, err := conn.Read(reply[:])
 	if err != nil || n < 12 {
 		return false, 0
@@ -602,7 +656,7 @@ func findInitialResolvers(candidates []string, domain string, bank *ResolverBank
 		case second := <-foundCh:
 			initial = append(initial, second.addr)
 			if bank != nil {
-				bank.RecordSuccess(second.addr, second.rtt)
+				bank.RecordSuccessWithEDNS(second.addr, second.rtt, 1232)
 			}
 		default:
 		}
@@ -653,13 +707,14 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 				addr string
 				rtt  time.Duration
 				ok   bool
+				edns int
 			}
 			resCh := make(chan batchRes, len(batch))
 
 			for _, addr := range batch {
 				go func(a string) {
-					ok, rtt := probeResolver(a, domain, 850*time.Millisecond)
-					resCh <- batchRes{addr: a, rtt: rtt, ok: ok}
+					ok, rtt, ednsCap := probeResolverWithEDNS(a, domain, 850*time.Millisecond)
+					resCh <- batchRes{addr: a, rtt: rtt, ok: ok, edns: ednsCap}
 				}(addr)
 			}
 
@@ -668,12 +723,13 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 				case res := <-resCh:
 					if res.ok {
 						if bank != nil {
-							bank.RecordSuccess(res.addr, res.rtt)
+							bank.RecordSuccessWithEDNS(res.addr, res.rtt, res.edns)
 						}
 						if addedCount < maxToAdd {
 							multiClient.AddResolver(res.addr)
+							multiClient.SetPathEDNS(res.addr, uint16(res.edns))
 							addedCount++
-							logMsg("INFO", "[SCANNER] Dynamically added healthy resolver to running core: %s (RTT: %v)", res.addr, res.rtt)
+							logMsg("INFO", "[SCANNER] Dynamically added healthy resolver to running core: %s (RTT: %v, EDNS: %dB)", res.addr, res.rtt, res.edns)
 						}
 					} else if bank != nil {
 						bank.RecordFail(res.addr)
@@ -697,6 +753,45 @@ func startBackgroundResolverScanner(ctx context.Context, multiClient *MultiClien
 			_ = bank.Save()
 		}
 		logMsg("INFO", "[SCANNER] Finished scanning all candidate resolvers. Added %d verified healthy paths.", addedCount)
+	}()
+}
+
+// startChaffTrafficGenerator emits periodic benign decoy DNS traffic to blur DPI flow analysis.
+func startChaffTrafficGenerator(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 20 * time.Second
+	}
+	decoys := []string{
+		"connectivitycheck.gstatic.com",
+		"time.cloudflare.com",
+		"msftconnecttest.com",
+		"dns.google",
+		"one.one.one.one",
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		idx := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				decoy := decoys[idx%len(decoys)]
+				idx++
+				go func(target string) {
+					conn, err := net.DialTimeout("udp", "1.1.1.1:53", 800*time.Millisecond)
+					if err == nil {
+						defer conn.Close()
+						_ = conn.SetDeadline(time.Now().Add(800 * time.Millisecond))
+						q := buildSOAQueryWithEDNS(target, 1232)
+						_, _ = conn.Write(q)
+						var dummy [512]byte
+						_, _ = conn.Read(dummy[:])
+					}
+				}(decoy)
+			}
+		}
 	}()
 }
 

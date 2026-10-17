@@ -69,6 +69,9 @@ func b32Decode(dst, src []byte) ([]byte, error) {
 	var acc uint64
 	var bits uint
 	for _, c := range src {
+		if c == '-' || c == '_' {
+			continue
+		}
 		v := b32Rev[c]
 		if v == 0xFF {
 			return nil, errDNS

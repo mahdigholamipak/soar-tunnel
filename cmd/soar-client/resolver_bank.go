@@ -18,6 +18,7 @@ type BankEntry struct {
 	SuccessCount int       `json:"success_count"`
 	FailCount    int       `json:"fail_count"`
 	Score        float64   `json:"score"`
+	MaxEDNS0     int       `json:"max_edns0,omitempty"`
 }
 
 // ResolverBank implements persistent caching and loss-weighted ranking of healthy resolvers,
@@ -80,6 +81,11 @@ func (b *ResolverBank) Save() error {
 
 // RecordSuccess updates a resolver's EWMA RTT, increments success count, and recalculates its health score.
 func (b *ResolverBank) RecordSuccess(addr string, rtt time.Duration) {
+	b.RecordSuccessWithEDNS(addr, rtt, 1232)
+}
+
+// RecordSuccessWithEDNS records a successful probe along with the discovered EDNS0 buffer capability.
+func (b *ResolverBank) RecordSuccessWithEDNS(addr string, rtt time.Duration, ednsSize int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -87,8 +93,9 @@ func (b *ResolverBank) RecordSuccess(addr string, rtt time.Duration) {
 	e, ok := b.Entries[addr]
 	if !ok {
 		e = &BankEntry{
-			Addr:  addr,
-			RTTMs: rttMs,
+			Addr:     addr,
+			RTTMs:    rttMs,
+			MaxEDNS0: ednsSize,
 		}
 		b.Entries[addr] = e
 	} else {
@@ -98,6 +105,12 @@ func (b *ResolverBank) RecordSuccess(addr string, rtt time.Duration) {
 		} else {
 			e.RTTMs = 0.7*e.RTTMs + 0.3*rttMs
 		}
+		if ednsSize > 0 {
+			e.MaxEDNS0 = ednsSize
+		}
+	}
+	if e.MaxEDNS0 == 0 {
+		e.MaxEDNS0 = 1232
 	}
 	e.SuccessCount++
 	e.LastVerified = time.Now()
@@ -128,8 +141,17 @@ func (b *ResolverBank) recomputeScore(e *BankEntry) {
 	}
 	successRatio := float64(e.SuccessCount) / float64(total)
 	latencyFactor := 1000.0 / math.Max(e.RTTMs, 10.0)
+
+	// EDNS0 buffer size bonus: higher buffer sizes carry larger payload frames per query
+	ednsBonus := 1.0
+	if e.MaxEDNS0 >= 1400 {
+		ednsBonus = 1.3
+	} else if e.MaxEDNS0 >= 1232 {
+		ednsBonus = 1.15
+	}
+
 	// Quadratic success ratio penalizes intermittent or flapping resolvers
-	e.Score = latencyFactor * math.Pow(successRatio, 2.0)
+	e.Score = latencyFactor * math.Pow(successRatio, 2.0) * ednsBonus
 }
 
 // GetTopHealthy returns the highest-scoring verified resolvers, filtered by maxAge.

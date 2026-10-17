@@ -210,6 +210,7 @@ type path struct {
 	// in the order they arrived, so a poll overtaken by later polls is lost, while one overtaken
 	// by data queries, which the server answers at once, may just be held.
 	maxPollAnswered uint64
+	ednsSize        uint16
 }
 
 type pendingQuery struct {
@@ -368,11 +369,23 @@ func (c *Client) ResolverCount() int {
 
 func (c *Client) newPath(ua *net.UDPAddr, tcp bool) *path {
 	p := &path{addr: ua, cwnd: 4, ssthresh: float64(c.cfg.MaxPathWindow), created: time.Now(),
-		nameLen: c.cfg.SafeQName, sizeCeil: c.cfg.maxLimitClass() + 1, maxClass: c.cfg.maxLimitClass(), qtype: typeTXT}
+		nameLen: c.cfg.SafeQName, sizeCeil: c.cfg.maxLimitClass() + 1, maxClass: c.cfg.maxLimitClass(), qtype: typeTXT,
+		ednsSize: 1232}
 	if tcp {
 		p.tcp = c.startTCP(ua.String())
 	}
 	return p
+}
+
+// SetPathEDNS updates the advertised EDNS0 buffer size for a resolver path (e.g. 512, 1232, 1400).
+func (c *Client) SetPathEDNS(addr string, ednsSize uint16) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.paths {
+		if p.addr.String() == addr {
+			p.ednsSize = ednsSize
+		}
+	}
 }
 
 // pruneCandidatesLocked drops unverified candidate paths that failed repeatedly without answering.
@@ -1128,7 +1141,11 @@ func (c *Client) sendDataLocked(cs *clientSession, p *path, now time.Time, allow
 func (c *Client) sendLocked(p *path, q *pendingQuery, payload []byte, now time.Time, timeout time.Duration) {
 	q.txn = c.newTxnLocked()
 	q.errRcode = -1
-	msg := appendQuery(make([]byte, 0, 300), q.txn, payload, c.z, p.qtype, 1232)
+	edns := p.ednsSize
+	if edns == 0 {
+		edns = 1232
+	}
+	msg := appendQuery(make([]byte, 0, 300), q.txn, payload, c.z, p.qtype, edns)
 	end, err := skipName(msg, hdrLen)
 	if err != nil {
 		return

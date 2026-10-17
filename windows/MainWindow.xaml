@@ -80,7 +80,7 @@
                         <TextBlock Text="SOAR" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,8,0" />
                         <TextBlock Text="DNS TUNNEL" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,12,0" />
                         <Border Background="#0369A1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="v1.1.0" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+                            <TextBlock Text="v1.2.0" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="Resilient Multi-Domain DNS Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
@@ -316,11 +316,12 @@
                             <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11" KeyDown="LvResolverBank_KeyDown">
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header="Resolver Address" Width="170" DisplayMemberBinding="{Binding Addr}" />
-                                        <GridViewColumn Header="EWMA Ping" Width="90" DisplayMemberBinding="{Binding RTTFormatted}" />
-                                        <GridViewColumn Header="Score" Width="80" DisplayMemberBinding="{Binding ScoreFormatted}" />
-                                        <GridViewColumn Header="Success / Fail" Width="100" DisplayMemberBinding="{Binding SuccessFailFormatted}" />
-                                        <GridViewColumn Header="Last Verified" Width="150" DisplayMemberBinding="{Binding LastVerifiedFormatted}" />
+                                        <GridViewColumn Header="Resolver Address" Width="150" DisplayMemberBinding="{Binding Addr}" />
+                                        <GridViewColumn Header="EWMA Ping" Width="80" DisplayMemberBinding="{Binding RTTFormatted}" />
+                                        <GridViewColumn Header="EDNS0" Width="70" DisplayMemberBinding="{Binding EDNSFormatted}" />
+                                        <GridViewColumn Header="Score" Width="75" DisplayMemberBinding="{Binding ScoreFormatted}" />
+                                        <GridViewColumn Header="Success / Fail" Width="95" DisplayMemberBinding="{Binding SuccessFailFormatted}" />
+                                        <GridViewColumn Header="Last Verified" Width="135" DisplayMemberBinding="{Binding LastVerifiedFormatted}" />
                                     </GridView>
                                 </ListView.View>
                             </ListView>

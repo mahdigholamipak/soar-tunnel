@@ -35,6 +35,7 @@ type frame struct {
 	val    uint64   // reset/close code, maxStream offset
 	ranges rangeSet // ack
 	lost   []uint64 // lost
+	fec    *fecFrame
 }
 
 // parseFrames calls fn for each frame in b. Stream data aliases b.
@@ -107,6 +108,27 @@ func parseFrames(b []byte, fn func(*frame) error) error {
 			}
 			f.data = r.bytes(n)
 			f.fin = f.typ&streamFin != 0
+		case f.typ == frFEC:
+			gid := r.varint()
+			idx := r.byte()
+			k := r.byte()
+			pnCount := r.varint()
+			if pnCount > 64 {
+				return errFrame
+			}
+			pns := make([]uint64, pnCount)
+			for i := range pns {
+				pns[i] = r.varint()
+			}
+			parityLen := r.varint()
+			parity := r.bytes(parityLen)
+			f.fec = &fecFrame{
+				GroupID: gid,
+				Idx:     idx,
+				K:       k,
+				PNs:     pns,
+				Parity:  parity,
+			}
 		default:
 			return errFrame
 		}

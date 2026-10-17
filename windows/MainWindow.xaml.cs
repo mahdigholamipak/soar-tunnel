@@ -19,7 +19,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.1.0";
+        private const string CurrentVersion = "v1.2.0";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -896,6 +896,7 @@ namespace SoarClient
                     Score = v.Score,
                     SuccessCount = v.SuccessCount,
                     FailCount = v.FailCount,
+                    MaxEDNS0 = v.MaxEDNS0,
                     LastVerified = v.LastVerified
                 }).OrderByDescending(x => x.Score).ToList();
 
@@ -1391,11 +1392,13 @@ namespace SoarClient
         public double Score { get; set; }
         public int SuccessCount { get; set; }
         public int FailCount { get; set; }
+        public int MaxEDNS0 { get; set; }
         public DateTime LastVerified { get; set; }
 
         public string RTTFormatted => $"{RttMs:F1} ms";
         public string ScoreFormatted => $"{Score:F1}";
         public string SuccessFailFormatted => $"{SuccessCount} / {FailCount}";
+        public string EDNSFormatted => MaxEDNS0 > 0 ? $"{MaxEDNS0} B" : "1232 B";
         public string LastVerifiedFormatted => LastVerified.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
@@ -1407,5 +1410,6 @@ namespace SoarClient
         public int SuccessCount { get; set; }
         public int FailCount { get; set; }
         public double Score { get; set; }
+        public int MaxEDNS0 { get; set; }
     }
 }
