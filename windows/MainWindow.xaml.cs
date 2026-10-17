@@ -634,7 +634,7 @@ namespace SoarClient
                         if (token.IsCancellationRequested) break;
                         await semaphore.WaitAsync(token);
 
-                        tasks.Add(Task.Run(async () =>
+                        tasks.Add(Task.Run(() =>
                         {
                             try
                             {
@@ -646,36 +646,28 @@ namespace SoarClient
                                 var port = int.Parse(parts[1]);
 
                                 var sw = Stopwatch.StartNew();
-                                using var udp = new System.Net.Sockets.UdpClient();
-                                udp.Client.ReceiveTimeout = 900;
-                                await udp.SendAsync(query, query.Length, host, port);
+                                using var client = new System.Net.Sockets.UdpClient();
+                                client.Client.ReceiveTimeout = 900;
+                                client.Send(query, query.Length, host, port);
+                                var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
+                                var resp = client.Receive(ref remote);
+                                sw.Stop();
 
-                                var receiveTask = udp.ReceiveAsync();
-                                var completed = await Task.WhenAny(receiveTask, Task.Delay(900, token));
-
-                                if (completed == receiveTask)
+                                if (resp.Length >= 12)
                                 {
-                                    var res = await receiveTask;
-                                    sw.Stop();
-                                    var resp = res.Buffer;
+                                    bool qr = (resp[2] & 0x80) != 0;
+                                    bool ra = (resp[3] & 0x80) != 0;
+                                    int rcode = resp[3] & 0x0F;
+                                    int an = (resp[6] << 8) | resp[7];
+                                    int ns = (resp[8] << 8) | resp[9];
 
-                                    if (resp.Length >= 12)
+                                    if (qr && ra && rcode == 0 && (an > 0 || ns > 0))
                                     {
-                                        bool qr = (resp[2] & 0x80) != 0;
-                                        bool ra = (resp[3] & 0x80) != 0;
-                                        int rcode = resp[3] & 0x0F;
-                                        int an = (resp[6] << 8) | resp[7];
-                                        int ns = (resp[8] << 8) | resp[9];
-
-                                        if (qr && ra && rcode == 0 && (an > 0 || ns > 0))
+                                        lock (_healthyScanResults)
                                         {
-                                            lock (_healthyScanResults)
-                                            {
-                                                _healthyScanResults.Add((ep, sw.ElapsedMilliseconds));
-                                            }
-                                            Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
-                                            return;
+                                            _healthyScanResults.Add((ep, sw.ElapsedMilliseconds));
                                         }
+                                        Dispatcher.Invoke(() => AppendLog($"[RESOLVER] {ep} -> {sw.ElapsedMilliseconds} ms (OK)"));
                                     }
                                 }
                             }
@@ -684,7 +676,7 @@ namespace SoarClient
                             {
                                 semaphore.Release();
                             }
-                        }, token));
+                        }));
                     }
 
                     try
