@@ -5,15 +5,15 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/bg_dark"
-    android:padding="14dp">
+    android:padding="12dp">
 
-    <!-- Header & Status -->
+    <!-- Top App Bar: Title, Badge, Action Icons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingBottom="10dp">
+        android:paddingBottom="8dp">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -39,12 +39,12 @@
                     android:id="@+id/tvVersionTag"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="v1.0.8"
-                    android:textSize="9sp"
+                    android:text="v1.0.9"
+                    android:textSize="9.5sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
                     android:background="#0369A1"
-                    android:paddingHorizontal="5dp"
+                    android:paddingHorizontal="6dp"
                     android:paddingVertical="2dp"
                     android:layout_marginStart="8dp" />
             </LinearLayout>
@@ -57,7 +57,6 @@
                 android:textColor="@color/text_muted" />
         </LinearLayout>
 
-        <!-- About & Update Buttons -->
         <ImageButton
             android:id="@+id/btnCheckUpdate"
             android:layout_width="32dp"
@@ -75,39 +74,10 @@
             android:src="@android:drawable/ic_menu_info_details"
             android:background="?attr/selectableItemBackgroundBorderless"
             app:tint="@color/text_muted"
-            android:contentDescription="About"
-            android:layout_marginEnd="8dp" />
-
-        <!-- Status Badge -->
-        <LinearLayout
-            android:id="@+id/layoutStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="@color/surface_dark"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="5dp">
-
-            <View
-                android:id="@+id/viewStatusDot"
-                android:layout_width="9dp"
-                android:layout_height="9dp"
-                android:background="@color/status_red"
-                android:layout_marginEnd="6dp" />
-
-            <TextView
-                android:id="@+id/tvStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/status_disconnected"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_light" />
-        </LinearLayout>
+            android:contentDescription="About" />
     </LinearLayout>
 
-    <!-- Profile Selector Bar -->
+    <!-- Profile Selector Header Bar -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -152,9 +122,10 @@
             android:layout_height="36dp"
             android:text="Share"
             android:textSize="11sp"
-            android:textColor="@color/text_light"
+            android:textColor="@color/primary_accent"
             android:backgroundTint="@color/surface_dark"
-            android:paddingHorizontal="8dp" />
+            android:paddingHorizontal="8dp"
+            android:layout_marginEnd="4dp" />
 
         <ImageButton
             android:id="@+id/btnDeleteProfile"
@@ -163,74 +134,441 @@
             android:src="@android:drawable/ic_menu_delete"
             android:backgroundTint="@color/surface_dark"
             app:tint="@color/status_red"
-            android:contentDescription="Delete Server Profile"
-            android:layout_marginStart="4dp" />
+            android:contentDescription="Delete Server Profile" />
     </LinearLayout>
 
-    <!-- Configuration Card -->
-    <com.google.android.material.card.MaterialCardView
+    <!-- Navigation Tabs: Dashboard, Resolvers, Config & Logs -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabLayout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:cardBackgroundColor="@color/surface_dark"
-        app:strokeColor="@color/border_dark"
-        app:strokeWidth="1dp"
-        app:cardCornerRadius="8dp"
+        android:layout_height="36dp"
+        android:background="@color/surface_dark"
+        app:tabIndicatorColor="@color/primary_accent"
+        app:tabSelectedTextColor="@color/primary_accent"
+        app:tabTextColor="@color/text_muted"
+        app:tabMode="fixed"
+        app:tabGravity="fill"
         android:layout_marginBottom="8dp">
 
-        <LinearLayout
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚡ Dashboard" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🌐 Resolvers" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚙️ Config &amp; Logs" />
+    </com.google.android.material.tabs.TabLayout>
+
+    <!-- Tab 1: Hero Dashboard (Inspired by MasterDnsVPN-AndroidGG) -->
+    <LinearLayout
+        android:id="@+id/layoutTabDashboard"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="visible">
+
+        <!-- Status Card -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="10dp">
+            app:cardBackgroundColor="@color/surface_dark"
+            app:strokeColor="@color/border_dark"
+            app:strokeWidth="1dp"
+            app:cardCornerRadius="10dp"
+            android:layout_marginBottom="10dp">
 
-            <!-- Server Key Input -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/server_key"
-                android:textColorHint="@color/text_muted"
-                app:boxStrokeColor="@color/primary_accent"
-                android:layout_marginBottom="6dp"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etServerKey"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_light"
-                    android:textSize="11sp"
-                    android:maxLines="2" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <!-- Tunnel Domains Input -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/tunnel_domains"
-                android:textColorHint="@color/text_muted"
-                app:boxStrokeColor="@color/primary_accent"
-                android:layout_marginBottom="6dp"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etDomains"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_light"
-                    android:textSize="11sp"
-                    android:singleLine="true" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <!-- Port and Resolver Test Bar -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:layout_marginBottom="6dp">
+                android:padding="12dp">
+
+                <View
+                    android:id="@+id/viewStatusDot"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:background="@color/status_red"
+                    android:layout_marginEnd="10dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/status_disconnected"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_light" />
+
+                    <TextView
+                        android:id="@+id/tvProfileSummary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Profile: None"
+                        android:textSize="11sp"
+                        android:textColor="@color/text_muted" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvProxyPortBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=":10850"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary_accent"
+                    android:background="#162234"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Big Hero Connect Button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnConnect"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="@string/connect"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            app:backgroundTint="@color/primary_accent"
+            app:cornerRadius="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Speedometer & Telemetry 2x2 Grid Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/surface_dark"
+            app:strokeColor="@color/border_dark"
+            app:strokeWidth="1dp"
+            app:cardCornerRadius="10dp"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="LIVE TUNNEL TELEMETRY"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_muted"
+                    android:layout_marginBottom="10dp" />
+
+                <!-- Row 1: Speeds -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="DOWNLOAD"
+                            android:textSize="9.5sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvHeroRx"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0 KB/s"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/status_green" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="UPLOAD"
+                            android:textSize="9.5sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvHeroTx"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0 KB/s"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/terminal_cyan" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Row 2: Streams & Total Data -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="ACTIVE STREAMS"
+                            android:textSize="9.5sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvHeroStreams"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_light" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="TOTAL TRANSFERRED"
+                            android:textSize="9.5sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvHeroTotal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0 MB"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/text_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Quick Action Shortcuts -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCopyProxy"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="@string/copy_socks"
+                android:textSize="11sp"
+                android:textColor="@color/text_light"
+                app:backgroundTint="@color/surface_dark"
+                app:strokeColor="@color/border_dark"
+                app:strokeWidth="1dp"
+                app:cornerRadius="8dp"
+                android:layout_marginEnd="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnOpenTelegram"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="@string/open_telegram"
+                android:textSize="11sp"
+                android:textColor="@color/primary_accent"
+                app:backgroundTint="@color/surface_dark"
+                app:strokeColor="@color/border_dark"
+                app:strokeWidth="1dp"
+                app:cornerRadius="8dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Tab 2: Resolvers Management & File Import -->
+    <LinearLayout
+        android:id="@+id/layoutTabResolvers"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Resolvers Actions Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnImportResolversFile"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="📂 Import .txt"
+                android:textSize="11.5sp"
+                android:textColor="#FFFFFF"
+                app:backgroundTint="@color/primary_accent"
+                app:cornerRadius="8dp"
+                android:layout_marginEnd="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTestResolvers"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="⚡ Test Latency"
+                android:textSize="11.5sp"
+                android:textColor="@color/primary_accent"
+                app:backgroundTint="@color/surface_dark"
+                app:strokeColor="@color/border_dark"
+                app:strokeWidth="1dp"
+                app:cornerRadius="8dp" />
+        </LinearLayout>
+
+        <!-- Candidate Resolvers Text Area -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            app:cardBackgroundColor="@color/surface_dark"
+            app:strokeColor="@color/border_dark"
+            app:strokeWidth="1dp"
+            app:cardCornerRadius="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:padding="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CANDIDATE DNS RESOLVERS"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary_accent"
+                    android:layout_marginBottom="6dp" />
+
+                <EditText
+                    android:id="@+id/etResolvers"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@null"
+                    android:textColor="@color/text_light"
+                    android:textSize="11sp"
+                    android:typeface="monospace"
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine"
+                    android:hint="Paste or import DNS resolver IPs (one per line or IP:port)..."
+                    android:textColorHint="@color/text_muted" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </LinearLayout>
+
+    <!-- Tab 3: Config & Live Logs -->
+    <LinearLayout
+        android:id="@+id/layoutTabConfig"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Server Configuration Section -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/surface_dark"
+            app:strokeColor="@color/border_dark"
+            app:strokeWidth="1dp"
+            app:cardCornerRadius="8dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="10dp">
 
                 <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="120dp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/server_key"
+                    android:textColorHint="@color/text_muted"
+                    app:boxStrokeColor="@color/primary_accent"
+                    android:layout_marginBottom="6dp"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etServerKey"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_light"
+                        android:textSize="11sp"
+                        android:maxLines="2" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/tunnel_domains"
+                    android:textColorHint="@color/text_muted"
+                    app:boxStrokeColor="@color/primary_accent"
+                    android:layout_marginBottom="6dp"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etDomains"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_light"
+                        android:textSize="11sp"
+                        android:singleLine="true" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="140dp"
                     android:layout_height="wrap_content"
                     android:hint="@string/socks_port"
                     android:textColorHint="@color/text_muted"
@@ -246,155 +584,79 @@
                         android:textColor="@color/text_light"
                         android:textSize="11sp" />
                 </com.google.android.material.textfield.TextInputLayout>
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="0dp"
-                    android:layout_weight="1" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnTestResolvers"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:text="Test Resolvers"
-                    android:textSize="10.5sp"
-                    android:textColor="@color/primary_accent"
-                    app:backgroundTint="#161F2E"
-                    app:strokeColor="@color/border_dark"
-                    app:strokeWidth="1dp"
-                    app:cornerRadius="6dp" />
             </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-            <!-- DNS Resolvers Input -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/dns_resolvers"
-                android:textColorHint="@color/text_muted"
-                app:boxStrokeColor="@color/primary_accent"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etResolvers"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_light"
-                    android:textSize="10.5sp"
-                    android:inputType="textMultiLine"
-                    android:lines="2"
-                    android:maxLines="4"
-                    android:gravity="top|start" />
-            </com.google.android.material.textfield.TextInputLayout>
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
-
-    <!-- Connect Button -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnConnect"
-        android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:text="@string/connect"
-        android:textSize="13.5sp"
-        android:textStyle="bold"
-        android:textColor="#FFFFFF"
-        app:backgroundTint="@color/primary_accent"
-        app:cornerRadius="6dp"
-        android:layout_marginBottom="6dp" />
-
-    <!-- Action Shortcuts -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="8dp">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnCopyProxy"
-            android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_weight="1"
-            android:text="@string/copy_socks"
-            android:textSize="10.5sp"
-            android:textColor="@color/text_light"
-            app:backgroundTint="@color/surface_dark"
-            app:strokeColor="@color/border_dark"
-            app:strokeWidth="1dp"
-            app:cornerRadius="6dp"
-            android:layout_marginEnd="6dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnOpenTelegram"
-            android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_weight="1"
-            android:text="@string/open_telegram"
-            android:textSize="10.5sp"
-            android:textColor="@color/text_light"
-            app:backgroundTint="@color/surface_dark"
-            app:strokeColor="@color/border_dark"
-            app:strokeWidth="1dp"
-            app:cornerRadius="6dp" />
-    </LinearLayout>
-
-    <!-- Live Terminal Log -->
-    <com.google.android.material.card.MaterialCardView
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        app:cardBackgroundColor="@color/terminal_bg"
-        app:strokeColor="@color/border_dark"
-        app:strokeWidth="1dp"
-        app:cardCornerRadius="8dp">
-
-        <LinearLayout
+        <!-- Live Terminal Log Section -->
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:padding="6dp">
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            app:cardBackgroundColor="@color/terminal_bg"
+            app:strokeColor="@color/border_dark"
+            app:strokeWidth="1dp"
+            app:cardCornerRadius="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingBottom="4dp">
-
-                <TextView
-                    android:id="@+id/tvLiveTelemetry"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="LIVE CONSOLE &amp; TELEMETRY"
-                    android:textSize="9.5sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_muted" />
-
-                <TextView
-                    android:id="@+id/tvClearLogs"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/clear_logs"
-                    android:textSize="9.5sp"
-                    android:textColor="@color/primary_accent"
-                    android:padding="3dp" />
-            </LinearLayout>
-
-            <ScrollView
-                android:id="@+id/scrollLogs"
-                android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:fillViewport="true">
+                android:orientation="vertical"
+                android:padding="6dp">
 
-                <TextView
-                    android:id="@+id/tvLogs"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/terminal_green"
-                    android:typeface="monospace"
-                    android:textSize="9.5sp"
-                    android:textIsSelectable="true" />
-            </ScrollView>
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/tvLiveTelemetry"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="LIVE CONSOLE &amp; TELEMETRY"
+                        android:textSize="9.5sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_muted" />
+
+                    <Button
+                        android:id="@+id/btnCopyLogs"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:text="Copy"
+                        android:textSize="9sp"
+                        android:textColor="@color/text_muted"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="6dp" />
+
+                    <TextView
+                        android:id="@+id/tvClearLogs"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/clear_logs"
+                        android:textSize="9.5sp"
+                        android:textColor="@color/primary_accent"
+                        android:padding="4dp" />
+                </LinearLayout>
+
+                <ScrollView
+                    android:id="@+id/scrollLogs"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:fillViewport="true">
+
+                    <TextView
+                        android:id="@+id/tvLogs"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_light"
+                        android:typeface="monospace"
+                        android:textSize="9.5sp"
+                        android:textIsSelectable="true" />
+                </ScrollView>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </LinearLayout>
 
 </LinearLayout>

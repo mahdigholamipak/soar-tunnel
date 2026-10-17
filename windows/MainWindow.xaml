@@ -1,8 +1,8 @@
 <Window x:Class="SoarClient.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Soar DNS Tunnel" Height="720" Width="980"
-        MinHeight="620" MinWidth="850"
+        Title="Soar DNS Tunnel" Height="740" Width="1020"
+        MinHeight="650" MinWidth="900"
         Background="{StaticResource BgBrush}"
         Foreground="{StaticResource TextBrush}"
         WindowStartupLocation="CenterScreen">
@@ -13,7 +13,7 @@
             <Setter Property="BorderBrush" Value="#2D3B50" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="8,6" />
-            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
         <Style TargetType="TextBlock">
@@ -24,12 +24,41 @@
             <Setter Property="Background" Value="#1A2230" />
             <Setter Property="Foreground" Value="#F8FAFC" />
             <Setter Property="BorderBrush" Value="#2D3B50" />
-            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="Padding" Value="6,4" />
+        </Style>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#94A3B8" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Background="#111827" BorderBrush="#1F2937" BorderThickness="1,1,1,0" CornerRadius="6,6,0,0" Margin="0,0,4,0" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#161D28" />
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#0EA5E9" />
+                                <Setter Property="Foreground" Value="#0EA5E9" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#F8FAFC" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
-    <Grid Margin="18">
+    <Grid Margin="16">
         <Grid.RowDefinitions>
             <!-- Header -->
             <RowDefinition Height="Auto" />
@@ -51,10 +80,10 @@
                         <TextBlock Text="SOAR" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,8,0" />
                         <TextBlock Text="DNS TUNNEL" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,12,0" />
                         <Border Background="#0369A1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="v1.0.8" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+                            <TextBlock Text="v1.0.9" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
                         </Border>
                     </StackPanel>
-                    <TextBlock Text="Loss-Tolerant Multi-Domain Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
+                    <TextBlock Text="Resilient Multi-Domain DNS Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
                 </StackPanel>
 
                 <!-- Right Header: Telemetry & Actions -->
@@ -87,20 +116,29 @@
         <!-- Main Body: Split Grid -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <!-- Configuration & Controls (380px) -->
-                <ColumnDefinition Width="380" />
-                <ColumnDefinition Width="16" />
-                <!-- Real-time Console Log (Fill) -->
+                <!-- Left Control Panel (360px) -->
+                <ColumnDefinition Width="360" />
+                <ColumnDefinition Width="14" />
+                <!-- Right Tabbed Panel (Fill) -->
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Configuration Card -->
-            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="14" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <!-- Left Control Panel -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <!-- Profile Card -->
+                    <RowDefinition Height="Auto" />
+                    <!-- Hero Connect Card -->
+                    <RowDefinition Height="Auto" />
+                    <!-- Options Card -->
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Profile Card -->
+                <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10">
                     <StackPanel>
-                        <!-- Server Profile Section -->
-                        <TextBlock Text="SERVER PROFILE" FontWeight="SemiBold" Foreground="#38BDF8" FontSize="11" Margin="0,0,0,4" />
-                        <Grid Margin="0,0,0,10">
+                        <TextBlock Text="ACTIVE SERVER PROFILE" FontWeight="SemiBold" Foreground="#38BDF8" FontSize="11" Margin="0,0,0,6" />
+                        <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="6" />
@@ -114,104 +152,224 @@
                         </Grid>
 
                         <!-- Import / Share Action Bar -->
-                        <Grid Margin="0,0,0,12">
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="6" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Button x:Name="BtnImportLink" Grid.Column="0" Click="BtnImportLink_Click" Height="28" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Import Link" ToolTip="Import soar:// standard or locked link" />
-                            <Button x:Name="BtnShareProfile" Grid.Column="2" Click="BtnShareProfile_Click" Height="28" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Share..." ToolTip="Share standard or privacy-locked link" />
+                            <Button x:Name="BtnImportLink" Grid.Column="0" Click="BtnImportLink_Click" Height="28" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Import Link" ToolTip="Import soar:// profile link" />
+                            <Button x:Name="BtnShareProfile" Grid.Column="2" Click="BtnShareProfile_Click" Height="28" Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" FontSize="11" Content="Share / QR..." ToolTip="Share link or view QR code" />
                         </Grid>
+                    </StackPanel>
+                </Border>
 
-                        <Separator Background="#1F2937" Margin="0,0,0,12" />
-
-                        <!-- Server Public Key -->
-                        <TextBlock Text="SERVER PUBLIC KEY" FontWeight="SemiBold" Foreground="#94A3B8" Margin="0,0,0,4" />
-                        <TextBox x:Name="TxtServerKey" Margin="0,0,0,10" ToolTip="32-byte Ed25519 Base64 Public Key" />
-
-                        <!-- Tunnel Domains -->
-                        <TextBlock Text="TUNNEL DOMAINS (ZONES)" FontWeight="SemiBold" Foreground="#94A3B8" Margin="0,0,0,4" />
-                        <TextBox x:Name="TxtDomains" Margin="0,0,0,4" ToolTip="Comma-separated zones, e.g. s.he7.ir, s.he6.ir" />
-                        <TextBlock Text="Supports multiple domains for automatic failover" FontSize="10" Foreground="#64748B" Margin="0,0,0,10" />
-
-                        <!-- SOCKS5 Port & IP -->
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="8" />
-                                <ColumnDefinition Width="1*" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="LISTEN IP" FontWeight="SemiBold" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtListenIP" Text="127.0.0.1" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="PORT" FontWeight="SemiBold" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtListenPort" Text="10850" />
-                            </StackPanel>
-                        </Grid>
-
-                        <!-- Resolvers Section -->
-                        <Grid Margin="0,0,0,4">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="RESOLVERS FILE" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" />
-                            <Button x:Name="BtnTestResolvers" Grid.Column="1" Click="BtnTestResolvers_Click" Content="Test Latency" Height="22" Padding="6,1" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="10" ToolTip="Test ping of all candidate resolvers" />
-                        </Grid>
-                        <TextBox x:Name="TxtResolversFile" Text="client_resolvers.txt" Margin="0,0,0,14" />
-
-                        <!-- System Proxy & Auto-start Options -->
-                        <CheckBox x:Name="ChkSystemProxy" Content="Set as Windows System Proxy" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="True" ToolTip="Automatically routes Windows and browser traffic through the tunnel" />
-                        <CheckBox x:Name="ChkMinimizeToTray" Content="Minimize to System Tray on close" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,14" IsChecked="True" />
-
-                        <!-- Connect / Disconnect Button -->
-                        <Button x:Name="BtnConnect" Click="BtnConnect_Click" Height="42" Background="#0284C7" Foreground="#FFFFFF" FontWeight="Bold" FontSize="13.5" BorderThickness="0" Margin="0,0,0,8">
+                <!-- Hero Connect Card -->
+                <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="14" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,10">
+                    <StackPanel>
+                        <!-- Big Connect Button -->
+                        <Button x:Name="BtnConnect" Click="BtnConnect_Click" Height="48" Background="#0284C7" Foreground="#FFFFFF" FontWeight="Bold" FontSize="15" BorderThickness="0" Margin="0,0,0,12" Cursor="Hand">
                             <Button.Resources>
                                 <Style TargetType="Border">
-                                    <Setter Property="CornerRadius" Value="6" />
+                                    <Setter Property="CornerRadius" Value="8" />
                                 </Style>
                             </Button.Resources>
                             CONNECT
                         </Button>
 
-                        <!-- Quick Action Buttons -->
+                        <!-- Telemetry Grid -->
+                        <Border Background="#0F172A" CornerRadius="6" Padding="10,8" Margin="0,0,0,12" BorderBrush="#1E293B" BorderThickness="1">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="4" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Row="0" Grid.Column="0">
+                                    <TextBlock Text="DOWNLOAD" FontSize="9.5" Foreground="#64748B" FontWeight="Bold" />
+                                    <TextBlock x:Name="TxtHeroRx" Text="0.0 KB/s" FontSize="12.5" FontWeight="SemiBold" Foreground="#10B981" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0" Grid.Column="1">
+                                    <TextBlock Text="UPLOAD" FontSize="9.5" Foreground="#64748B" FontWeight="Bold" />
+                                    <TextBlock x:Name="TxtHeroTx" Text="0.0 KB/s" FontSize="12.5" FontWeight="SemiBold" Foreground="#38BDF8" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="2" Grid.Column="0">
+                                    <TextBlock Text="ACTIVE STREAMS" FontSize="9.5" Foreground="#64748B" FontWeight="Bold" />
+                                    <TextBlock x:Name="TxtHeroStreams" Text="0" FontSize="12.5" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="2" Grid.Column="1">
+                                    <TextBlock Text="TOTAL DATA" FontSize="9.5" Foreground="#64748B" FontWeight="Bold" />
+                                    <TextBlock x:Name="TxtHeroTotal" Text="0 MB" FontSize="12.5" FontWeight="SemiBold" Foreground="#94A3B8" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Quick Action Shortcuts -->
                         <Grid Margin="0,0,0,4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="6" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Button x:Name="BtnCopyProxy" Grid.Column="0" Click="BtnCopyProxy_Click" Height="30" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Copy Proxy Link" />
-                            <Button x:Name="BtnSaveConfig" Grid.Column="2" Click="BtnSaveConfig_Click" Height="30" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Save Profile" />
+                            <Button x:Name="BtnCopyProxy" Grid.Column="0" Click="BtnCopyProxy_Click" Height="30" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" FontSize="11" Content="Copy SOCKS5" />
+                            <Button x:Name="BtnLaunchTelegram" Grid.Column="2" Click="BtnLaunchTelegram_Click" Height="30" Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" FontSize="11" Content="Open Telegram" />
                         </Grid>
                     </StackPanel>
-                </ScrollViewer>
-            </Border>
+                </Border>
 
-            <!-- Live Console Log Card -->
-            <Border Grid.Column="2" Background="#0B0F17" CornerRadius="8" Padding="14" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <!-- Options Card -->
+                <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="CONNECTION OPTIONS" FontWeight="SemiBold" Foreground="#38BDF8" FontSize="11" Margin="0,0,0,8" />
+                        <CheckBox x:Name="ChkSystemProxy" Content="Set as Windows System Proxy" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="True" ToolTip="Automatically routes Windows and browser traffic through the tunnel" />
+                        <CheckBox x:Name="ChkMinimizeToTray" Content="Minimize to System Tray on close" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,10" IsChecked="True" />
+                        <CheckBox x:Name="ChkAutoDetectClipboard" Content="Auto-detect profile in clipboard" Foreground="#E2E8F0" FontSize="11.5" Margin="0,0,0,8" IsChecked="True" ToolTip="Prompt to import when copying a soar:// link" />
+                    </StackPanel>
+                </Border>
+            </Grid>
 
-                    <!-- Log Header -->
-                    <Grid Grid.Row="0" Margin="0,0,0,8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="LIVE TELEMETRY &amp; TUNNEL CONSOLE" FontWeight="SemiBold" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Click="BtnClearLogs_Click" Content="Clear" Height="24" Padding="10,2" Background="#1E293B" Foreground="#94A3B8" BorderThickness="0" FontSize="11" />
-                    </Grid>
+            <!-- Right Tabbed Panel -->
+            <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                <TabControl x:Name="MainTabs">
+                    <!-- Tab 1: Terminal & Live Console -->
+                    <TabItem Header="📜 Live Console">
+                        <Grid Margin="0,8,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
 
-                    <!-- Terminal Output -->
-                    <TextBox x:Name="TxtConsoleLog" Grid.Row="1" Background="#080C14" Foreground="#10B981" FontFamily="Consolas, Cascadia Code, Courier New" FontSize="11" IsReadOnly="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" TextWrapping="Wrap" BorderThickness="0" Padding="8" />
-                </Grid>
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="TELEMETRY &amp; TUNNEL LOGS" FontWeight="SemiBold" Foreground="#64748B" FontSize="11" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Click="BtnCopyLogs_Click" Content="Copy All" Height="24" Padding="10,2" Background="#1E293B" Foreground="#94A3B8" BorderThickness="0" FontSize="11" ToolTip="Copy all logs to clipboard" />
+                                <Button Grid.Column="3" Click="BtnClearLogs_Click" Content="Clear" Height="24" Padding="10,2" Background="#1E293B" Foreground="#94A3B8" BorderThickness="0" FontSize="11" />
+                            </Grid>
+
+                            <!-- Syntax Highlighted Rich Log Console -->
+                            <RichTextBox x:Name="RtbConsoleLog" Grid.Row="1" Background="#080C14" Foreground="#94A3B8" FontFamily="Consolas, Cascadia Code, Courier New" FontSize="11" IsReadOnly="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" BorderThickness="0" Padding="8">
+                                <RichTextBox.Resources>
+                                    <Style TargetType="Paragraph">
+                                        <Setter Property="Margin" Value="0" />
+                                        <Setter Property="LineHeight" Value="16" />
+                                    </Style>
+                                </RichTextBox.Resources>
+                                <FlowDocument />
+                            </RichTextBox>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- Tab 2: Resolver Bank & Scanner -->
+                    <TabItem Header="🌐 Resolvers &amp; Bank">
+                        <Grid Margin="0,8,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="120" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Actions Bar -->
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="BtnImportResolversFile" Grid.Column="0" Click="BtnImportResolversFile_Click" Height="28" Padding="10,2" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📂 Import from .txt" ToolTip="Import custom candidate resolvers from any text file" />
+                                <Button x:Name="BtnTestResolvers" Grid.Column="2" Click="BtnTestResolvers_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="⚡ Test Latency" ToolTip="Run parallel health &amp; latency test on candidate resolvers" />
+                                <Button x:Name="BtnRefreshBank" Grid.Column="4" Click="BtnRefreshBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#A855F7" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🔄 Reload Bank" ToolTip="Reload cached resolvers from resolvers_bank.json" />
+                            </Grid>
+
+                            <!-- Candidate Resolvers Text Area -->
+                            <TextBox x:Name="TxtResolversFile" Grid.Row="1" Text="client_resolvers.txt" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,0,0,10" ToolTip="Active candidate resolvers file name or list" />
+
+                            <!-- Resolver Bank Header -->
+                            <Grid Grid.Row="2" Margin="0,0,0,6">
+                                <TextBlock Text="PERSISTENT RESOLVER BANK (EWMA LATENCY &amp; HEALTH RANKING)" FontWeight="SemiBold" Foreground="#A855F7" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TxtBankCount" HorizontalAlignment="Right" Text="0 cached" Foreground="#64748B" FontSize="11" />
+                            </Grid>
+
+                            <!-- Resolver Bank Cache ListView -->
+                            <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Resolver Address" Width="170" DisplayMemberBinding="{Binding Addr}" />
+                                        <GridViewColumn Header="EWMA Ping" Width="90" DisplayMemberBinding="{Binding RTTFormatted}" />
+                                        <GridViewColumn Header="Score" Width="80" DisplayMemberBinding="{Binding ScoreFormatted}" />
+                                        <GridViewColumn Header="Success / Fail" Width="100" DisplayMemberBinding="{Binding SuccessFailFormatted}" />
+                                        <GridViewColumn Header="Last Verified" Width="150" DisplayMemberBinding="{Binding LastVerifiedFormatted}" />
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- Tab 3: Advanced Settings -->
+                    <TabItem Header="⚙️ Configuration">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+                            <StackPanel>
+                                <TextBlock Text="SERVER CREDENTIALS &amp; ROUTING" FontWeight="SemiBold" Foreground="#38BDF8" FontSize="11" Margin="0,0,0,6" />
+
+                                <!-- Server Public Key -->
+                                <TextBlock Text="SERVER PUBLIC KEY (32-BYTE ED25519)" FontWeight="SemiBold" Foreground="#94A3B8" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtServerKey" Margin="0,0,0,10" ToolTip="32-byte Ed25519 Base64 Public Key" />
+
+                                <!-- Tunnel Domains -->
+                                <TextBlock Text="TUNNEL DOMAINS (ZONES)" FontWeight="SemiBold" Foreground="#94A3B8" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtDomains" Margin="0,0,0,4" ToolTip="Comma-separated zones, e.g. s.he7.ir, s.he6.ir" />
+                                <TextBlock Text="Multi-domain failover racing; automatically switches domains upon filtering" FontSize="10" Foreground="#64748B" Margin="0,0,10,0" />
+
+                                <!-- SOCKS5 Port & IP -->
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="1*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="LISTEN IP" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                        <TextBox x:Name="TxtListenIP" Text="127.0.0.1" TextChanged="TxtListenPort_TextChanged" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="PORT" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                        <TextBox x:Name="TxtListenPort" Text="10850" TextChanged="TxtListenPort_TextChanged" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- Idle Timeout -->
+                                <TextBlock Text="STREAM IDLE TIMEOUT (SECONDS)" FontWeight="SemiBold" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtIdleTimeout" Text="60" Margin="0,0,0,14" />
+
+                                <!-- Save Button -->
+                                <Button x:Name="BtnSaveConfig" Click="BtnSaveConfig_Click" Height="36" Background="#0284C7" Foreground="#FFFFFF" FontWeight="Bold" FontSize="12" BorderThickness="0" Margin="0,0,0,8">
+                                    <Button.Resources>
+                                        <Style TargetType="Border">
+                                            <Setter Property="CornerRadius" Value="6" />
+                                        </Style>
+                                    </Button.Resources>
+                                    Save Profile Changes
+                                </Button>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </Border>
         </Grid>
 

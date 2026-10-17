@@ -7,15 +7,19 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Media;
-using System.Windows.Threading;
+using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using QRCoder;
 
 namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.0.8";
+        private const string CurrentVersion = "v1.0.9";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -33,12 +37,26 @@ namespace SoarClient
         private System.Windows.Forms.NotifyIcon? _notifyIcon;
         private bool _isExplicitExit = false;
 
+        // Clipboard Auto-Detect
+        private string _lastAutoDetectedClipboard = "";
+
+        // Syntax Highlighting Brushes
+        private readonly SolidColorBrush _brushGreen = new((Color)ColorConverter.ConvertFromString("#10B981"));
+        private readonly SolidColorBrush _brushRed = new((Color)ColorConverter.ConvertFromString("#EF4444"));
+        private readonly SolidColorBrush _brushAmber = new((Color)ColorConverter.ConvertFromString("#F59E0B"));
+        private readonly SolidColorBrush _brushCyan = new((Color)ColorConverter.ConvertFromString("#38BDF8"));
+        private readonly SolidColorBrush _brushPurple = new((Color)ColorConverter.ConvertFromString("#A855F7"));
+        private readonly SolidColorBrush _brushGray = new((Color)ColorConverter.ConvertFromString("#64748B"));
+        private readonly SolidColorBrush _brushDefault = new((Color)ColorConverter.ConvertFromString("#94A3B8"));
+        private const int MaxLogParagraphs = 800;
+
         public MainWindow()
         {
             InitializeComponent();
             Loaded += MainWindow_Loaded;
             Closing += MainWindow_Closing;
             StateChanged += MainWindow_StateChanged;
+            Activated += MainWindow_Activated;
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -46,10 +64,39 @@ namespace SoarClient
             ProxyHelper.BackupCurrentProxy();
             InitSystemTray();
             LoadProfilesList();
-            TxtListenPort.TextChanged += (s, ev) => UpdateFooterProxyText();
-            TxtListenIP.TextChanged += (s, ev) => UpdateFooterProxyText();
             UpdateFooterProxyText();
+            LoadResolverBank();
             _ = CheckForUpdatesAsync(silent: true);
+        }
+
+        private void MainWindow_Activated(object? sender, EventArgs e)
+        {
+            if (ChkAutoDetectClipboard?.IsChecked != true) return;
+
+            try
+            {
+                if (Clipboard.ContainsText())
+                {
+                    var text = Clipboard.GetText()?.Trim() ?? "";
+                    if (text.StartsWith("soar://", StringComparison.OrdinalIgnoreCase) && text != _lastAutoDetectedClipboard)
+                    {
+                        _lastAutoDetectedClipboard = text;
+                        var res = MessageBox.Show(
+                            "Detected a Soar profile link in your clipboard:\n\n" +
+                            text + "\n\n" +
+                            "Would you like to import this server profile now?",
+                            "Clipboard Auto-Detect",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Question);
+
+                        if (res == MessageBoxResult.Yes)
+                        {
+                            ImportProfileFromUri(text);
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         private void InitSystemTray()
@@ -133,7 +180,7 @@ namespace SoarClient
             }
         }
 
-        private void CmbProfiles_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        private void CmbProfiles_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CmbProfiles.SelectedItem is ServerProfile profile)
             {
@@ -161,6 +208,7 @@ namespace SoarClient
 
             TxtListenPort.Text = profile.ListenPort.ToString();
             TxtResolversFile.Text = profile.ResolversFile;
+            UpdateFooterProxyText();
             AppendLog($"[PROFILE] Active profile: {profile.Name} (Locked: {profile.IsLocked})");
         }
 
@@ -232,6 +280,14 @@ namespace SoarClient
                 return;
             }
 
+            if (!ImportProfileFromUri(text))
+            {
+                MessageBox.Show("Invalid or unsupported link format. Must start with soar://profile or soar://locked", "Import Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private bool ImportProfileFromUri(string text)
+        {
             var imported = ConfigManager.ImportProfileUri(text);
             if (imported != null)
             {
@@ -241,12 +297,11 @@ namespace SoarClient
                 CmbProfiles.ItemsSource = null;
                 CmbProfiles.ItemsSource = _profiles;
                 CmbProfiles.SelectedItem = imported;
-                MessageBox.Show($"Profile '{imported.Name}' successfully imported from clipboard!", "Import Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendLog($"[PROFILE] Imported new profile '{imported.Name}' (Locked: {imported.IsLocked}).");
+                MessageBox.Show($"Profile '{imported.Name}' successfully imported!", "Import Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                return true;
             }
-            else
-            {
-                MessageBox.Show("Invalid or unsupported link format. Must start with soar://profile or soar://locked", "Import Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            return false;
         }
 
         private void BtnShareProfile_Click(object sender, RoutedEventArgs e)
@@ -267,11 +322,117 @@ namespace SoarClient
             var link = ConfigManager.ExportProfileUri(_activeProfile, isLocked);
             Clipboard.SetText(link);
 
-            MessageBox.Show(
-                $"Connection link copied to clipboard!\n\nLink: {link}\n\nMode: {(isLocked ? "Privacy Protected (Locked)" : "Standard")}",
-                "Profile Shared",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            ShowQrCodeWindow(_activeProfile.Name, link, isLocked);
+        }
+
+        private void ShowQrCodeWindow(string profileName, string link, bool isLocked)
+        {
+            try
+            {
+                using var qrGenerator = new QRCodeGenerator();
+                using var qrCodeData = qrGenerator.CreateQrCode(link, QRCodeGenerator.ECCLevel.M);
+                using var qrCode = new PngByteQRCode(qrCodeData);
+                byte[] qrBytes = qrCode.GetGraphic(12);
+
+                var bmp = new BitmapImage();
+                using (var ms = new MemoryStream(qrBytes))
+                {
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.StreamSource = ms;
+                    bmp.EndInit();
+                    bmp.Freeze();
+                }
+
+                var qrWindow = new Window
+                {
+                    Title = $"Share Profile: {profileName}",
+                    Width = 380,
+                    Height = 490,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    Owner = this,
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0B0F17")),
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F8FAFC")),
+                    ResizeMode = ResizeMode.NoResize
+                };
+
+                var rootStack = new StackPanel { Margin = new Thickness(20) };
+
+                var titleBlock = new TextBlock
+                {
+                    Text = profileName,
+                    FontSize = 16,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8")),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 4)
+                };
+                rootStack.Children.Add(titleBlock);
+
+                var modeBlock = new TextBlock
+                {
+                    Text = isLocked ? "🔒 Protected (Locked) Profile" : "🌐 Standard Profile",
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8")),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 16)
+                };
+                rootStack.Children.Add(modeBlock);
+
+                var qrBorder = new Border
+                {
+                    Background = Brushes.White,
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(14),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 16)
+                };
+                var qrImg = new Image
+                {
+                    Source = bmp,
+                    Width = 240,
+                    Height = 240,
+                    Stretch = Stretch.Uniform
+                };
+                qrBorder.Child = qrImg;
+                rootStack.Children.Add(qrBorder);
+
+                var noteBlock = new TextBlock
+                {
+                    Text = "Scan with Soar Tunnel Android or copy link below.",
+                    FontSize = 10.5,
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 0, 0, 14)
+                };
+                rootStack.Children.Add(noteBlock);
+
+                var btnCopy = new Button
+                {
+                    Content = "Copy Link to Clipboard",
+                    Height = 36,
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0284C7")),
+                    Foreground = Brushes.White,
+                    FontWeight = FontWeights.SemiBold,
+                    FontSize = 12,
+                    BorderThickness = new Thickness(0),
+                    Cursor = Cursors.Hand
+                };
+                btnCopy.Click += (s, ev) =>
+                {
+                    Clipboard.SetText(link);
+                    MessageBox.Show("Profile link copied to clipboard!", "Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+                };
+                rootStack.Children.Add(btnCopy);
+
+                qrWindow.Content = rootStack;
+                qrWindow.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[SHARE] QR generation error: {ex.Message}");
+                MessageBox.Show($"Could not render QR Code: {ex.Message}\n\nLink copied to clipboard:\n{link}", "Share Profile", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         #endregion
@@ -380,15 +541,43 @@ namespace SoarClient
 
         private async Task StopTunnelAsync()
         {
+            if (!_isConnected && _tunnelProcess == null) return;
+
+            // Immediately mark disconnected and disarm exit events to avoid race conditions and UI freezes
+            _isConnected = false;
             UpdateUIState(connecting: true);
             StatusText.Text = "Disconnecting...";
             BtnConnect.IsEnabled = false;
             AppendLog("[STOP] Disconnecting tunnel...");
 
+            var proc = _tunnelProcess;
+            _tunnelProcess = null;
+            if (proc != null)
+            {
+                try { proc.EnableRaisingEvents = false; } catch { }
+            }
+
             var restoreProxy = (ChkSystemProxy.IsChecked == true);
 
             await Task.Run(() =>
             {
+                if (proc != null)
+                {
+                    try
+                    {
+                        if (!proc.HasExited)
+                        {
+                            proc.Kill(entireProcessTree: true);
+                            proc.WaitForExit(1500);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { proc.Dispose(); } catch { }
+                    }
+                }
+
                 if (restoreProxy)
                 {
                     try
@@ -397,24 +586,6 @@ namespace SoarClient
                     }
                     catch { }
                 }
-
-                if (_tunnelProcess != null)
-                {
-                    try
-                    {
-                        if (!_tunnelProcess.HasExited)
-                        {
-                            _tunnelProcess.Kill(entireProcessTree: true);
-                            _tunnelProcess.WaitForExit(2500);
-                        }
-                    }
-                    catch { }
-                    finally
-                    {
-                        try { _tunnelProcess.Dispose(); } catch { }
-                        _tunnelProcess = null;
-                    }
-                }
             });
 
             if (restoreProxy)
@@ -422,7 +593,6 @@ namespace SoarClient
                 AppendLog("[PROXY] System proxy settings restored.");
             }
 
-            _isConnected = false;
             UpdateUIState(connected: false);
             AppendLog("[STATUS] Disconnected.");
         }
@@ -431,7 +601,6 @@ namespace SoarClient
         {
             if (line.StartsWith("[TELEMETRY]"))
             {
-                // Parse machine readable telemetry: [TELEMETRY] tx=... rx=... tx_rate=... rx_rate=... streams=...
                 try
                 {
                     var parts = line.Substring("[TELEMETRY]".Length).Trim().Split(' ');
@@ -442,11 +611,27 @@ namespace SoarClient
                         if (kv.Length == 2) dict[kv[0]] = kv[1];
                     }
 
-                    if (dict.TryGetValue("tx_rate", out var txr)) TxtSpeedTx.Text = $"{txr} KB/s";
-                    if (dict.TryGetValue("rx_rate", out var rxr)) TxtSpeedRx.Text = $"{rxr} KB/s";
-                    if (dict.TryGetValue("streams", out var s) && dict.TryGetValue("tx", out var tx) && dict.TryGetValue("rx", out var rx))
+                    if (dict.TryGetValue("tx_rate", out var txr))
                     {
-                        TxtStats.Text = $"Streams: {s} | TX: {FormatBytes(ulong.Parse(tx))} | RX: {FormatBytes(ulong.Parse(rx))}";
+                        TxtSpeedTx.Text = $"{txr} KB/s";
+                        TxtHeroTx.Text = $"{txr} KB/s";
+                    }
+                    if (dict.TryGetValue("rx_rate", out var rxr))
+                    {
+                        TxtSpeedRx.Text = $"{rxr} KB/s";
+                        TxtHeroRx.Text = $"{rxr} KB/s";
+                    }
+                    if (dict.TryGetValue("streams", out var s))
+                    {
+                        TxtHeroStreams.Text = s;
+                    }
+                    if (dict.TryGetValue("tx", out var tx) && dict.TryGetValue("rx", out var rx))
+                    {
+                        ulong txBytes = ulong.TryParse(tx, out var txb) ? txb : 0;
+                        ulong rxBytes = ulong.TryParse(rx, out var rxb) ? rxb : 0;
+                        ulong total = txBytes + rxBytes;
+                        TxtHeroTotal.Text = FormatBytes(total);
+                        TxtStats.Text = $"Streams: {dict.GetValueOrDefault("streams", "0")} | Total: {FormatBytes(total)} (TX {FormatBytes(txBytes)}, RX {FormatBytes(rxBytes)})";
                     }
                 }
                 catch { }
@@ -477,6 +662,11 @@ namespace SoarClient
                     });
                 }
             }
+        }
+
+        private void TxtListenPort_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateFooterProxyText();
         }
 
         private void UpdateFooterProxyText()
@@ -529,13 +719,17 @@ namespace SoarClient
                 BtnConnect.IsEnabled = true;
                 TxtSpeedTx.Text = "0.0 KB/s";
                 TxtSpeedRx.Text = "0.0 KB/s";
+                TxtHeroTx.Text = "0.0 KB/s";
+                TxtHeroRx.Text = "0.0 KB/s";
+                TxtHeroStreams.Text = "0";
+                TxtHeroTotal.Text = "0 MB";
                 TxtStats.Text = "Idle";
             }
         }
 
         #endregion
 
-        #region Resolvers & Utilities
+        #region Resolvers & Bank Management
 
         private static byte[] BuildDnsQuery(string domain)
         {
@@ -555,14 +749,129 @@ namespace SoarClient
             return query.ToArray();
         }
 
+        private void BtnImportResolversFile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var ofd = new Microsoft.Win32.OpenFileDialog
+                {
+                    Title = "Import Candidate DNS Resolvers (.txt)",
+                    Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*",
+                    Multiselect = false
+                };
+
+                if (ofd.ShowDialog() == true)
+                {
+                    var selectedFile = ofd.FileName;
+                    var lines = File.ReadAllLines(selectedFile)
+                        .Select(l => l.Trim())
+                        .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
+                        .Distinct()
+                        .ToList();
+
+                    if (lines.Count == 0)
+                    {
+                        MessageBox.Show("No valid resolver IP addresses found in the selected file.", "Import Resolvers", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    var appDir = AppContext.BaseDirectory;
+                    var targetFileName = string.IsNullOrWhiteSpace(TxtResolversFile.Text) ? "client_resolvers.txt" : TxtResolversFile.Text.Trim();
+                    var targetPath = Path.Combine(appDir, targetFileName);
+
+                    var res = MessageBox.Show(
+                        $"Found {lines.Count} resolvers in '{Path.GetFileName(selectedFile)}'.\n\n" +
+                        $"Choose an import action for '{targetFileName}':\n\n" +
+                        $"• [Yes] Overwrite '{targetFileName}' with these {lines.Count} resolvers\n" +
+                        $"• [No] Append to existing resolvers in '{targetFileName}'\n" +
+                        $"• [Cancel] Abort import",
+                        "Import Candidate Resolvers",
+                        MessageBoxButton.YesNoCancel,
+                        MessageBoxImage.Question);
+
+                    if (res == MessageBoxResult.Cancel) return;
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        File.WriteAllLines(targetPath, lines);
+                        AppendLog($"[RESOLVER] Imported {lines.Count} candidate resolvers from '{Path.GetFileName(selectedFile)}' into '{targetFileName}'.");
+                    }
+                    else if (res == MessageBoxResult.No)
+                    {
+                        var existing = File.Exists(targetPath) ? File.ReadAllLines(targetPath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l)).ToList() : new List<string>();
+                        var combined = existing.Concat(lines).Distinct().ToList();
+                        File.WriteAllLines(targetPath, combined);
+                        AppendLog($"[RESOLVER] Appended {lines.Count} candidate resolvers into '{targetFileName}' (Total: {combined.Count}).");
+                    }
+
+                    MessageBox.Show($"Successfully processed {lines.Count} resolvers into '{targetFileName}'!", "Import Successful", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[RESOLVER] Error importing resolvers file: {ex.Message}");
+                MessageBox.Show($"Failed to import file: {ex.Message}", "Import Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnRefreshBank_Click(object sender, RoutedEventArgs e)
+        {
+            LoadResolverBank();
+        }
+
+        private void LoadResolverBank()
+        {
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (!File.Exists(bankPath))
+                {
+                    TxtBankCount.Text = "0 cached (Bank starts automatically on connect)";
+                    LvResolverBank.ItemsSource = null;
+                    return;
+                }
+
+                var json = File.ReadAllText(bankPath);
+                var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (entries == null || entries.Count == 0)
+                {
+                    TxtBankCount.Text = "0 cached";
+                    LvResolverBank.ItemsSource = null;
+                    return;
+                }
+
+                var list = entries.Values.Select(v => new ResolverBankItemViewModel
+                {
+                    Addr = v.Addr,
+                    RttMs = v.RttMs,
+                    Score = v.Score,
+                    SuccessCount = v.SuccessCount,
+                    FailCount = v.FailCount,
+                    LastVerified = v.LastVerified
+                }).OrderByDescending(x => x.Score).ToList();
+
+                LvResolverBank.ItemsSource = list;
+                TxtBankCount.Text = $"{list.Count} cached in bank (Ranked by EWMA score)";
+                AppendLog($"[BANK] Loaded {list.Count} persistent resolver metrics from bank cache.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[BANK] Error reading resolvers_bank.json: {ex.Message}");
+            }
+        }
+
         private async void BtnTestResolvers_Click(object sender, RoutedEventArgs e)
         {
             if (_scanCts != null)
             {
-                // User clicked "Stop Test"
                 _scanCts.Cancel();
                 _scanCts = null;
-                BtnTestResolvers.Content = "Test Latency";
+                BtnTestResolvers.Content = "⚡ Test Latency";
                 BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
                 AppendLog("[RESOLVER] Scanner stopped by user.");
 
@@ -584,7 +893,7 @@ namespace SoarClient
                 var parts = TxtDomains.Text.Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length > 0) domain = parts[0].Trim();
             }
-            if (string.IsNullOrEmpty(domain))
+            if (string.IsNullOrEmpty(domain) || domain.Contains("Protected"))
             {
                 domain = "google.com";
             }
@@ -617,7 +926,7 @@ namespace SoarClient
             _scanCts = new System.Threading.CancellationTokenSource();
             var token = _scanCts.Token;
 
-            BtnTestResolvers.Content = "Stop Test";
+            BtnTestResolvers.Content = "⏹ Stop Test";
             BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
             AppendLog($"[RESOLVER] Testing {lines.Count} resolvers for {domain} in parallel (Click 'Stop Test' anytime)...");
 
@@ -695,7 +1004,7 @@ namespace SoarClient
             finally
             {
                 _scanCts = null;
-                BtnTestResolvers.Content = "Test Latency";
+                BtnTestResolvers.Content = "⚡ Test Latency";
                 BtnTestResolvers.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
 
                 List<(string Addr, long PingMs)> sorted;
@@ -732,7 +1041,7 @@ namespace SoarClient
             }
 
             sb.AppendLine("\nOptions:");
-            sb.AppendLine("• Click [Yes] to save the fastest resolvers into your resolvers file.");
+            sb.AppendLine("• Click [Yes] to save the fastest resolvers into your active resolvers file.");
             sb.AppendLine("• Click [No] to copy all healthy resolvers to clipboard.");
             sb.AppendLine("• Click [Cancel] to dismiss.");
 
@@ -763,6 +1072,126 @@ namespace SoarClient
                 }
                 catch { }
             }
+        }
+
+        #endregion
+
+        #region Actions & Console Logs
+
+        private void BtnLaunchTelegram_Click(object sender, RoutedEventArgs e)
+        {
+            var ip = string.IsNullOrWhiteSpace(TxtListenIP?.Text) ? "127.0.0.1" : TxtListenIP.Text.Trim();
+            var port = string.IsNullOrWhiteSpace(TxtListenPort?.Text) ? "10850" : TxtListenPort.Text.Trim();
+            var tgUrl = $"tg://socks?server={ip}&port={port}";
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = tgUrl,
+                    UseShellExecute = true
+                });
+                AppendLog($"[TELEGRAM] Launched Telegram with proxy: {tgUrl}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[TELEGRAM] Failed to launch Telegram automatically: {ex.Message}");
+                Clipboard.SetText(tgUrl);
+                MessageBox.Show($"Could not automatically open Telegram. Link copied to clipboard:\n\n{tgUrl}", "Telegram Link", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private void BtnCopyProxy_Click(object sender, RoutedEventArgs e)
+        {
+            var ip = string.IsNullOrWhiteSpace(TxtListenIP?.Text) ? "127.0.0.1" : TxtListenIP.Text.Trim();
+            var port = string.IsNullOrWhiteSpace(TxtListenPort?.Text) ? "10850" : TxtListenPort.Text.Trim();
+            var proxyUrl = $"socks5://{ip}:{port}";
+            Clipboard.SetText(proxyUrl);
+            AppendLog($"[CLIPBOARD] Copied SOCKS5 proxy address: {proxyUrl}");
+            MessageBox.Show($"Proxy link copied to clipboard:\n{proxyUrl}", "Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void BtnSaveConfig_Click(object sender, RoutedEventArgs e)
+        {
+            SaveCurrentProfileFromUI();
+            MessageBox.Show("Profile successfully saved!", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void BtnClearLogs_Click(object sender, RoutedEventArgs e)
+        {
+            RtbConsoleLog.Document?.Blocks.Clear();
+        }
+
+        private void BtnCopyLogs_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (RtbConsoleLog.Document == null) return;
+                var textRange = new TextRange(RtbConsoleLog.Document.ContentStart, RtbConsoleLog.Document.ContentEnd);
+                Clipboard.SetText(textRange.Text);
+                AppendLog("[CLIPBOARD] All console logs copied to clipboard.");
+                MessageBox.Show("All console logs copied to clipboard!", "Logs Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to copy logs: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void AppendLog(string message)
+        {
+            if (RtbConsoleLog == null) return;
+
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => AppendLog(message)));
+                return;
+            }
+
+            var ts = DateTime.Now.ToString("HH:mm:ss");
+            var doc = RtbConsoleLog.Document;
+            if (doc == null)
+            {
+                doc = new FlowDocument();
+                RtbConsoleLog.Document = doc;
+            }
+
+            if (doc.Blocks.Count > MaxLogParagraphs)
+            {
+                for (int i = 0; i < 100 && doc.Blocks.Count > 0; i++)
+                {
+                    doc.Blocks.Remove(doc.Blocks.FirstBlock);
+                }
+            }
+
+            var p = new Paragraph();
+            p.Inlines.Add(new Run($"[{ts}] ") { Foreground = _brushGray });
+
+            SolidColorBrush lineBrush = _brushDefault;
+            if (message.StartsWith("[ERROR]", StringComparison.OrdinalIgnoreCase) || message.Contains("failed", StringComparison.OrdinalIgnoreCase))
+            {
+                lineBrush = _brushRed;
+            }
+            else if (message.StartsWith("[WARN]", StringComparison.OrdinalIgnoreCase))
+            {
+                lineBrush = _brushAmber;
+            }
+            else if (message.StartsWith("[STATUS]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[TUNNEL]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[PROXY]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[START]", StringComparison.OrdinalIgnoreCase))
+            {
+                lineBrush = _brushGreen;
+            }
+            else if (message.StartsWith("[TELEMETRY]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[STATS]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[CLIPBOARD]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[PROFILE]", StringComparison.OrdinalIgnoreCase))
+            {
+                lineBrush = _brushCyan;
+            }
+            else if (message.StartsWith("[BANK]", StringComparison.OrdinalIgnoreCase) || message.StartsWith("[RESOLVER]", StringComparison.OrdinalIgnoreCase))
+            {
+                lineBrush = _brushPurple;
+            }
+
+            p.Inlines.Add(new Run(message) { Foreground = lineBrush });
+            doc.Blocks.Add(p);
+
+            RtbConsoleLog.ScrollToEnd();
         }
 
         private async void BtnCheckUpdate_Click(object sender, RoutedEventArgs e)
@@ -815,38 +1244,14 @@ namespace SoarClient
                       "Based on the foundational Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                       "Ecosystem Features:\n" +
                       "• Multi-domain failover & racing\n" +
-                      "• Dynamic resolver probing\n" +
-                      "• Privacy-preserving locked profile sharing\n" +
+                      "• Dynamic resolver probing & EWMA latency ranking\n" +
+                      "• Persistent Resolver Bank cache\n" +
+                      "• Candidate resolver TXT file import\n" +
+                      "• Privacy-preserving locked profile sharing & QR Codes\n" +
                       "• Windows System Proxy integration\n\n" +
                       "Repository: https://github.com/" + GitHubRepo;
 
             MessageBox.Show(msg, "About Soar DNS Tunnel", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void BtnCopyProxy_Click(object sender, RoutedEventArgs e)
-        {
-            var port = TxtListenPort.Text.Trim();
-            var proxyUrl = $"socks5://127.0.0.1:{port}";
-            Clipboard.SetText(proxyUrl);
-            MessageBox.Show($"Proxy link copied to clipboard:\n{proxyUrl}", "Copied", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void BtnSaveConfig_Click(object sender, RoutedEventArgs e)
-        {
-            SaveCurrentProfileFromUI();
-            MessageBox.Show("Profile successfully saved!", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void BtnClearLogs_Click(object sender, RoutedEventArgs e)
-        {
-            TxtConsoleLog.Clear();
-        }
-
-        private void AppendLog(string message)
-        {
-            var ts = DateTime.Now.ToString("HH:mm:ss");
-            TxtConsoleLog.AppendText($"[{ts}] {message}\n");
-            TxtConsoleLog.ScrollToEnd();
         }
 
         private static string FormatBytes(ulong bytes)
@@ -858,5 +1263,30 @@ namespace SoarClient
         }
 
         #endregion
+    }
+
+    public class ResolverBankItemViewModel
+    {
+        public string Addr { get; set; } = "";
+        public double RttMs { get; set; }
+        public double Score { get; set; }
+        public int SuccessCount { get; set; }
+        public int FailCount { get; set; }
+        public DateTime LastVerified { get; set; }
+
+        public string RTTFormatted => $"{RttMs:F1} ms";
+        public string ScoreFormatted => $"{Score:F1}";
+        public string SuccessFailFormatted => $"{SuccessCount} / {FailCount}";
+        public string LastVerifiedFormatted => LastVerified.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
+    public class BankEntryItem
+    {
+        public string Addr { get; set; } = "";
+        public double RttMs { get; set; }
+        public DateTime LastVerified { get; set; }
+        public int SuccessCount { get; set; }
+        public int FailCount { get; set; }
+        public double Score { get; set; }
     }
 }

@@ -4,18 +4,26 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import android.widget.EditText
-import android.widget.Toast
+import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.material.tabs.TabLayout
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import com.soar.tunnel.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -29,19 +37,36 @@ class MainActivity : AppCompatActivity() {
     private val scannedHealthyResults = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
     private var scannedTotalCount = 0
 
+    private val logBuffer = SpannableStringBuilder()
+    private val maxLogLength = 100_000
+    private var lastDetectedClipboard = ""
+
+    private val importResolversFileLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            handleResolversFileImport(uri)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         loadProfiles()
+        setupTabs()
         setupListeners()
         observeTunnelEvents()
         handleIncomingIntent(intent)
         updateUIState(TunnelProcessManager.isRunning)
 
-        // Silent update check in background
         UpdateManager.checkForUpdates(this, silent = true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkClipboardForProfile()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -56,6 +81,50 @@ class MainActivity : AppCompatActivity() {
                 importFromUriString(uri.toString())
             }
         }
+    }
+
+    private fun checkClipboardForProfile() {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip?.getItemAt(0)?.text?.toString()?.trim() ?: return
+            if (clip.startsWith("soar://", ignoreCase = true) && clip != lastDetectedClipboard) {
+                lastDetectedClipboard = clip
+                AlertDialog.Builder(this)
+                    .setTitle("Import Soar Profile")
+                    .setMessage("Detected a Soar profile link in your clipboard:\n\n$clip\n\nWould you like to import it now?")
+                    .setPositiveButton("Import") { _, _ ->
+                        importFromUriString(clip)
+                    }
+                    .setNegativeButton("Ignore", null)
+                    .show()
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun setupTabs() {
+        binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                when (tab?.position) {
+                    0 -> {
+                        binding.layoutTabDashboard.visibility = View.VISIBLE
+                        binding.layoutTabResolvers.visibility = View.GONE
+                        binding.layoutTabConfig.visibility = View.GONE
+                    }
+                    1 -> {
+                        binding.layoutTabDashboard.visibility = View.GONE
+                        binding.layoutTabResolvers.visibility = View.VISIBLE
+                        binding.layoutTabConfig.visibility = View.GONE
+                    }
+                    2 -> {
+                        binding.layoutTabDashboard.visibility = View.GONE
+                        binding.layoutTabResolvers.visibility = View.GONE
+                        binding.layoutTabConfig.visibility = View.VISIBLE
+                    }
+                }
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab?) {}
+            override fun onTabReselected(tab: TabLayout.Tab?) {}
+        })
     }
 
     private fun loadProfiles() {
@@ -93,6 +162,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.etPort.setText(profile.port.toString())
         binding.etResolvers.setText(profile.resolvers.ifBlank { ProfileManager.DEFAULT_RESOLVERS })
+        binding.tvProfileSummary.text = "Profile: ${profile.name} ${if (profile.isLocked) "(Locked)" else ""}"
+        binding.tvProxyPortBadge.text = ":${profile.port}"
     }
 
     private fun saveCurrentProfileFromUI() {
@@ -144,6 +215,7 @@ class MainActivity : AppCompatActivity() {
                     activeProfile = newProf
                     ProfileManager.saveProfiles(this, profiles)
                     refreshProfileSpinner()
+                    appendColoredLog("[PROFILE] Created new server profile '${newProf.name}'")
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
@@ -173,19 +245,16 @@ class MainActivity : AppCompatActivity() {
             val p = activeProfile ?: return@setOnClickListener
             saveCurrentProfileFromUI()
 
-            val options = arrayOf("Standard Share (Visible Details)", "Protected Share (Hide Domains & Key)")
+            val options = arrayOf(
+                "Standard Share (Visible Keys & Domains)",
+                "Protected Share (Hide Keys & Domains)"
+            )
             AlertDialog.Builder(this)
                 .setTitle("Share '${p.name}'")
                 .setItems(options) { _, which ->
                     val locked = (which == 1) || p.isLocked
                     val link = ProfileManager.exportProfileUri(p, locked)
-
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, link)
-                        putExtra(Intent.EXTRA_SUBJECT, "Soar Tunnel Connection")
-                    }
-                    startActivity(Intent.createChooser(shareIntent, "Share Soar Server"))
+                    showQrShareDialog(p.name, link, locked)
                 }
                 .show()
         }
@@ -215,9 +284,14 @@ class MainActivity : AppCompatActivity() {
                     ProfileManager.saveProfiles(this, profiles)
                     refreshProfileSpinner()
                     Toast.makeText(this, "Deleted profile '${p.name}'", Toast.LENGTH_SHORT).show()
+                    appendColoredLog("[PROFILE] Deleted server profile '${p.name}'")
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
+        }
+
+        binding.btnImportResolversFile.setOnClickListener {
+            importResolversFileLauncher.launch("text/*")
         }
 
         binding.btnTestResolvers.setOnClickListener {
@@ -241,25 +315,144 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnCopyProxy.setOnClickListener {
-            val port = binding.etPort.text.toString().trim()
+            val port = binding.etPort.text.toString().trim().ifBlank { "10850" }
             val proxyUrl = "socks5://127.0.0.1:$port"
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("SOCKS5 Proxy", proxyUrl))
             Toast.makeText(this, "Copied: $proxyUrl", Toast.LENGTH_SHORT).show()
+            appendColoredLog("[CLIPBOARD] Copied SOCKS5 link: $proxyUrl")
         }
 
         binding.btnOpenTelegram.setOnClickListener {
-            val port = binding.etPort.text.toString().trim()
+            val port = binding.etPort.text.toString().trim().ifBlank { "10850" }
             val uri = Uri.parse("tg://socks?server=127.0.0.1&port=$port")
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, uri))
-            } catch (e: Exception) {
-                Toast.makeText(this, "Telegram is not installed", Toast.LENGTH_SHORT).show()
+                appendColoredLog("[TELEGRAM] Launched Telegram with proxy: tg://socks?server=127.0.0.1&port=$port")
+            } catch (_: Exception) {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("Telegram Proxy", uri.toString()))
+                Toast.makeText(this, "Telegram not installed. Link copied to clipboard!", Toast.LENGTH_SHORT).show()
             }
         }
 
         binding.tvClearLogs.setOnClickListener {
+            logBuffer.clear()
             binding.tvLogs.text = ""
+        }
+
+        binding.btnCopyLogs.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Console Logs", binding.tvLogs.text.toString()))
+            Toast.makeText(this, "Copied all logs to clipboard", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleResolversFileImport(uri: Uri) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri) ?: return
+            val lines = BufferedReader(InputStreamReader(inputStream)).use { reader ->
+                reader.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith(";") }
+                    .distinct()
+                    .toList()
+            }
+
+            if (lines.isEmpty()) {
+                Toast.makeText(this, "No valid resolver addresses found in file", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            AlertDialog.Builder(this)
+                .setTitle("Import Resolvers (.txt)")
+                .setMessage("Found ${lines.size} resolvers in selected file.\n\nChoose import mode:")
+                .setPositiveButton("Overwrite") { _, _ ->
+                    binding.etResolvers.setText(lines.joinToString("\n"))
+                    saveCurrentProfileFromUI()
+                    appendColoredLog("[RESOLVER] Overwrote active resolvers with ${lines.size} candidate resolvers from file.")
+                    Toast.makeText(this, "Loaded ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
+                }
+                .setNeutralButton("Append") { _, _ ->
+                    val existing = binding.etResolvers.text.toString().split("\n")
+                        .map { it.trim() }.filter { it.isNotEmpty() }
+                    val merged = (existing + lines).distinct()
+                    binding.etResolvers.setText(merged.joinToString("\n"))
+                    saveCurrentProfileFromUI()
+                    appendColoredLog("[RESOLVER] Appended ${lines.size} candidate resolvers (Total: ${merged.size}).")
+                    Toast.makeText(this, "Appended ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Failed to read file: ${e.message}", Toast.LENGTH_LONG).show()
+            appendColoredLog("[ERROR] Failed to read resolvers file: ${e.message}")
+        }
+    }
+
+    private fun showQrShareDialog(profileName: String, link: String, isLocked: Boolean) {
+        try {
+            val writer = QRCodeWriter()
+            val bitMatrix = writer.encode(link, BarcodeFormat.QR_CODE, 512, 512)
+            val width = bitMatrix.width
+            val height = bitMatrix.height
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bmp.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
+                }
+            }
+
+            val layout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                setPadding(32, 24, 32, 16)
+            }
+
+            val ivQr = ImageView(this).apply {
+                setImageBitmap(bmp)
+                layoutParams = LinearLayout.LayoutParams(480, 480).apply {
+                    bottomMargin = 24
+                }
+            }
+            layout.addView(ivQr)
+
+            val tvNote = TextView(this).apply {
+                text = if (isLocked) "🔒 Protected Profile (Keys & Domains hidden)" else "🌐 Standard Profile (Keys & Domains visible)"
+                textSize = 12f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_muted))
+                textAlignment = View.TEXT_ALIGNMENT_CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = 16
+                }
+            }
+            layout.addView(tvNote)
+
+            AlertDialog.Builder(this)
+                .setTitle("Share Profile: $profileName")
+                .setView(layout)
+                .setPositiveButton("Copy Link") { _, _ ->
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("Soar Profile", link))
+                    Toast.makeText(this, "Link copied to clipboard!", Toast.LENGTH_SHORT).show()
+                }
+                .setNeutralButton("Share via App") { _, _ ->
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, link)
+                        putExtra(Intent.EXTRA_SUBJECT, "Soar Tunnel Connection")
+                    }
+                    startActivity(Intent.createChooser(shareIntent, "Share Soar Server"))
+                }
+                .setNegativeButton("Close", null)
+                .show()
+        } catch (e: Exception) {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Soar Profile", link))
+            Toast.makeText(this, "Link copied to clipboard!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -270,6 +463,7 @@ class MainActivity : AppCompatActivity() {
             activeProfile = imported
             ProfileManager.saveProfiles(this, profiles)
             refreshProfileSpinner()
+            appendColoredLog("[PROFILE] Imported server profile '${imported.name}'")
             Toast.makeText(this, "Imported: ${imported.name}", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "Invalid soar:// link format", Toast.LENGTH_SHORT).show()
@@ -280,8 +474,8 @@ class MainActivity : AppCompatActivity() {
         if (scanJob?.isActive == true) {
             scanJob?.cancel()
             scanJob = null
-            binding.btnTestResolvers.text = "Test Resolvers"
-            binding.tvLogs.append("\n[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.\n")
+            binding.btnTestResolvers.text = "⚡ Test Latency"
+            appendColoredLog("[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.")
             if (scannedHealthyResults.isNotEmpty()) {
                 val sorted = synchronized(scannedHealthyResults) {
                     scannedHealthyResults.sortedBy { it.second }.toList()
@@ -309,12 +503,12 @@ class MainActivity : AppCompatActivity() {
         val domainsText = binding.etDomains.text.toString().trim()
         val targetDomain = domainsText.split(",", ";", "\n")
             .map { it.trim() }
-            .firstOrNull { it.isNotEmpty() } ?: ""
+            .firstOrNull { it.isNotEmpty() && !it.contains("Protected") } ?: ""
 
         val probeTargetName = if (targetDomain.isNotEmpty()) targetDomain else "google.com"
-        binding.btnTestResolvers.text = "Stop Test"
+        binding.btnTestResolvers.text = "⏹ Stop Test"
         Toast.makeText(this, "Testing ${list.size} resolvers for $probeTargetName...", Toast.LENGTH_SHORT).show()
-        binding.tvLogs.append("\n[TEST] Probing ${list.size} resolvers for $probeTargetName (strictly validating recursion & authority)...\n")
+        appendColoredLog("[TEST] Probing ${list.size} resolvers for $probeTargetName in parallel...")
 
         scanJob = CoroutineScope(Dispatchers.IO).launch {
             val dnsQuery = if (targetDomain.isNotEmpty()) {
@@ -332,7 +526,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                q.add(0x00) // null root label
+                q.add(0x00)
                 q.add(0x00); q.add(0x06) // Type SOA
                 q.add(0x00); q.add(0x01) // Class IN
                 q.toByteArray()
@@ -350,7 +544,7 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-            val chunks = list.chunked(10)
+            val chunks = list.chunked(12)
 
             for (chunk in chunks) {
                 if (!isActive) break
@@ -376,7 +570,7 @@ class MainActivity : AppCompatActivity() {
 
                             if (recvPacket.length < 12) {
                                 withContext(Dispatchers.Main) {
-                                    binding.tvLogs.append("[BAD] $r (short response)\n")
+                                    appendColoredLog("[BAD] $r (short response)")
                                 }
                                 return@async
                             }
@@ -389,18 +583,18 @@ class MainActivity : AppCompatActivity() {
 
                             if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0)) {
                                 withContext(Dispatchers.Main) {
-                                    binding.tvLogs.append("[REJECTED] $r (RA=$ra, RCODE=$rcode)\n")
+                                    appendColoredLog("[REJECTED] $r (RA=$ra, RCODE=$rcode)")
                                 }
                                 return@async
                             }
 
                             scannedHealthyResults.add(Pair(r, elapsed))
                             withContext(Dispatchers.Main) {
-                                binding.tvLogs.append("[OK] $r -> ${elapsed}ms\n")
+                                appendColoredLog("[OK] $r -> ${elapsed}ms")
                             }
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             withContext(Dispatchers.Main) {
-                                binding.tvLogs.append("[TIMEOUT] $r\n")
+                                appendColoredLog("[TIMEOUT] $r")
                             }
                         }
                     }
@@ -409,7 +603,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
-                binding.btnTestResolvers.text = "Test Resolvers"
+                binding.btnTestResolvers.text = "⚡ Test Latency"
                 scanJob = null
 
                 if (scannedHealthyResults.isNotEmpty()) {
@@ -449,12 +643,14 @@ class MainActivity : AppCompatActivity() {
                 binding.etResolvers.setText(top5.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied top ${top5.size} fastest resolvers!", Toast.LENGTH_SHORT).show()
+                appendColoredLog("[RESOLVER] Saved top ${top5.size} fastest resolvers to profile.")
             }
             .setNeutralButton("Use All Working (${results.size})") { _, _ ->
                 val allWorking = results.map { it.first }
                 binding.etResolvers.setText(allWorking.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied all ${allWorking.size} working resolvers!", Toast.LENGTH_SHORT).show()
+                appendColoredLog("[RESOLVER] Saved all ${allWorking.size} working resolvers to profile.")
             }
             .setNegativeButton("Copy List") { _, _ ->
                 val allWorking = results.map { it.first }.joinToString("\n")
@@ -474,14 +670,17 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.8\n\n" +
-                "Protocol Attribution & Credits:\n" +
+                "SOAR DNS TUNNEL v1.0.9\n\n" +
+                "Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
-                "• Multi-domain racing and automatic failover\n" +
-                "• Dynamic resolver latency testing\n" +
+                "• MasterDnsVPN & TheFeed inspired UI/UX\n" +
+                "• Hero Dashboard & Live Speedometer telemetry\n" +
+                "• Candidate resolver TXT file import\n" +
+                "• QR Code profile sharing & clipboard auto-detect\n" +
+                "• Multi-domain failover & EWMA latency probing\n" +
                 "• Privacy-preserving locked profiles (soar://locked)\n" +
-                "• In-app updates via GitHub Releases\n\n" +
+                "• In-app GitHub release updates\n\n" +
                 "Repository: github.com/mahdigholamipak/soar-tunnel"
             )
             .setPositiveButton("OK", null)
@@ -510,6 +709,7 @@ class MainActivity : AppCompatActivity() {
         }
         ContextCompat.startForegroundService(this, serviceIntent)
         updateUIState(true)
+        appendColoredLog("[START] Starting Soar tunnel service with profile '${p.name}'...")
     }
 
     private fun stopTunnelService() {
@@ -518,15 +718,13 @@ class MainActivity : AppCompatActivity() {
         }
         startService(serviceIntent)
         updateUIState(false)
+        appendColoredLog("[STOP] Tunnel service stopped.")
     }
 
     private fun observeTunnelEvents() {
         TunnelProcessManager.onLogReceived = { logLine ->
             runOnUiThread {
-                binding.tvLogs.append(logLine + "\n")
-                binding.scrollLogs.post {
-                    binding.scrollLogs.fullScroll(View.FOCUS_DOWN)
-                }
+                appendColoredLog(logLine)
             }
         }
 
@@ -541,8 +739,16 @@ class MainActivity : AppCompatActivity() {
                     val txRate = map["tx_rate"] ?: "0.0"
                     val rxRate = map["rx_rate"] ?: "0.0"
                     val streams = map["streams"] ?: "0"
-                    binding.tvLiveTelemetry.text = "↓ ${rxRate} KB/s  ↑ ${txRate} KB/s  (${streams} streams)"
-                } catch (e: Exception) { }
+                    val tx = map["tx"]?.toLongOrNull() ?: 0L
+                    val rx = map["rx"]?.toLongOrNull() ?: 0L
+                    val total = tx + rx
+
+                    binding.tvHeroRx.text = "$rxRate KB/s"
+                    binding.tvHeroTx.text = "$txRate KB/s"
+                    binding.tvHeroStreams.text = streams
+                    binding.tvHeroTotal.text = formatBytes(total)
+                    binding.tvLiveTelemetry.text = "↓ $rxRate KB/s  ↑ $txRate KB/s  ($streams streams)"
+                } catch (_: Exception) { }
             }
         }
 
@@ -553,18 +759,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun appendColoredLog(line: String) {
+        val color = when {
+            line.startsWith("[OK]", true) || line.startsWith("[STATUS]", true) || line.startsWith("[TUNNEL]", true) ->
+                ContextCompat.getColor(this, R.color.terminal_green)
+            line.startsWith("[TIMEOUT]", true) || line.startsWith("[REJECTED]", true) || line.startsWith("[BAD]", true) || line.startsWith("[ERROR]", true) ->
+                ContextCompat.getColor(this, R.color.terminal_red)
+            line.startsWith("[WARN]", true) ->
+                ContextCompat.getColor(this, R.color.terminal_amber)
+            line.startsWith("[TEST]", true) || line.startsWith("[START]", true) || line.startsWith("[TELEMETRY]", true) || line.startsWith("[PROFILE]", true) ->
+                ContextCompat.getColor(this, R.color.terminal_cyan)
+            line.startsWith("[BANK]", true) || line.startsWith("[RESOLVER]", true) ->
+                ContextCompat.getColor(this, R.color.terminal_purple)
+            else ->
+                ContextCompat.getColor(this, R.color.text_light)
+        }
+
+        val start = logBuffer.length
+        logBuffer.append(line).append("\n")
+        val end = logBuffer.length
+        logBuffer.setSpan(ForegroundColorSpan(color), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        if (logBuffer.length > maxLogLength) {
+            logBuffer.delete(0, 20_000)
+        }
+
+        binding.tvLogs.text = logBuffer
+        binding.scrollLogs.post {
+            binding.scrollLogs.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 * 1024 -> String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024 * 1024))
+            bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.2f MB", bytes / (1024.0 * 1024))
+            bytes >= 1024 -> String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
+    }
+
     private fun updateUIState(running: Boolean) {
         if (running) {
             binding.tvStatus.text = getString(R.string.status_connected)
-            binding.viewStatusDot.setBackgroundColor(getColor(R.color.status_green))
+            binding.viewStatusDot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_green))
             binding.btnConnect.text = getString(R.string.disconnect)
-            binding.btnConnect.setBackgroundColor(getColor(R.color.status_red))
+            binding.btnConnect.setBackgroundColor(ContextCompat.getColor(this, R.color.status_red))
         } else {
             binding.tvStatus.text = getString(R.string.status_disconnected)
-            binding.viewStatusDot.setBackgroundColor(getColor(R.color.status_red))
+            binding.viewStatusDot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_red))
             binding.btnConnect.text = getString(R.string.connect)
-            binding.btnConnect.setBackgroundColor(getColor(R.color.primary_accent))
+            binding.btnConnect.setBackgroundColor(ContextCompat.getColor(this, R.color.primary_accent))
             binding.tvLiveTelemetry.text = "LIVE CONSOLE & TELEMETRY"
+            binding.tvHeroRx.text = "0.0 KB/s"
+            binding.tvHeroTx.text = "0.0 KB/s"
+            binding.tvHeroStreams.text = "0"
+            binding.tvHeroTotal.text = "0 MB"
         }
     }
 }
