@@ -134,7 +134,7 @@ const (
 	outcomeWindow = 20
 	lateGrace     = 3 * time.Second
 	helloRetry    = time.Second
-	maxHelloPaths = 16
+	maxHelloPaths = 32
 )
 
 // Client tunnels streams through DNS.

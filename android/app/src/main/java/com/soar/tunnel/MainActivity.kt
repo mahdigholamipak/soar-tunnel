@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var profiles = mutableListOf<ServerProfile>()
     private var activeProfile: ServerProfile? = null
+    private var scanJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -244,6 +245,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun testResolversLatency() {
+        if (scanJob?.isActive == true) {
+            scanJob?.cancel()
+            scanJob = null
+            binding.btnTestResolvers.text = "Test Resolvers"
+            binding.tvLogs.append("\n[TEST] Scan stopped by user.\n")
+            Toast.makeText(this, "Scan stopped", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val rawResolvers = binding.etResolvers.text.toString().trim()
         val list = rawResolvers.split("\n", ",", ";")
             .map { it.trim() }
@@ -254,64 +264,129 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        Toast.makeText(this, "Testing ${list.size} resolvers...", Toast.LENGTH_SHORT).show()
-        binding.tvLogs.append("\n[TEST] Probing resolvers latency...\n")
+        binding.btnTestResolvers.text = "Stop Test"
+        Toast.makeText(this, "Testing ${list.size} resolvers in parallel...", Toast.LENGTH_SHORT).show()
+        binding.tvLogs.append("\n[TEST] Probing ${list.size} resolvers concurrently...\n")
 
-        CoroutineScope(Dispatchers.IO).launch {
-            val dummyQuery = byteArrayOf(
-                0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01
+        scanJob = CoroutineScope(Dispatchers.IO).launch {
+            // Standard DNS Query for google.com (A record)
+            val dnsQuery = byteArrayOf(
+                0x12, 0x34,
+                0x01, 0x00,
+                0x00, 0x01,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x06, 'g'.code.toByte(), 'o'.code.toByte(), 'o'.code.toByte(), 'g'.code.toByte(), 'l'.code.toByte(), 'e'.code.toByte(),
+                0x03, 'c'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte(),
+                0x00,
+                0x00, 0x01,
+                0x00, 0x01
             )
 
-            val results = mutableListOf<Pair<String, Long>>()
+            val results = java.util.Collections.synchronizedList(mutableListOf<Pair<String, Long>>())
+            val chunks = list.chunked(10)
 
-            for (r in list) {
-                val host = if (r.contains(":")) r.substringBefore(":") else r
-                val port = if (r.contains(":")) r.substringAfter(":").toIntOrNull() ?: 53 else 53
+            for (chunk in chunks) {
+                if (!isActive) break
+                val jobs = chunk.map { r ->
+                    async {
+                        if (!isActive) return@async
+                        val host = if (r.contains(":")) r.substringBefore(":") else r
+                        val port = if (r.contains(":")) r.substringAfter(":").toIntOrNull() ?: 53 else 53
 
-                val startTime = System.currentTimeMillis()
-                try {
-                    val socket = DatagramSocket()
-                    socket.soTimeout = 1200
-                    val address = InetAddress.getByName(host)
-                    val packet = DatagramPacket(dummyQuery, dummyQuery.size, address, port)
-                    socket.send(packet)
+                        val startTime = System.currentTimeMillis()
+                        try {
+                            val socket = DatagramSocket()
+                            socket.soTimeout = 900
+                            val address = InetAddress.getByName(host)
+                            val packet = DatagramPacket(dnsQuery, dnsQuery.size, address, port)
+                            socket.send(packet)
 
-                    val buf = ByteArray(512)
-                    val recvPacket = DatagramPacket(buf, buf.size)
-                    socket.receive(recvPacket)
-                    val elapsed = System.currentTimeMillis() - startTime
-                    socket.close()
+                            val buf = ByteArray(512)
+                            val recvPacket = DatagramPacket(buf, buf.size)
+                            socket.receive(recvPacket)
+                            val elapsed = System.currentTimeMillis() - startTime
+                            socket.close()
 
-                    results.add(Pair(r, elapsed))
-                    withContext(Dispatchers.Main) {
-                        binding.tvLogs.append("[OK] $r -> ${elapsed}ms\n")
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        binding.tvLogs.append("[TIMEOUT] $r\n")
+                            results.add(Pair(r, elapsed))
+                            withContext(Dispatchers.Main) {
+                                binding.tvLogs.append("[OK] $r -> ${elapsed}ms\n")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                binding.tvLogs.append("[TIMEOUT] $r\n")
+                            }
+                        }
                     }
                 }
+                jobs.awaitAll()
             }
 
             results.sortBy { it.second }
-            if (results.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    val top5 = results.take(5).map { it.first }
-                    binding.tvLogs.append("[RESULT] Selected ${top5.size} fastest resolvers.\n")
-                    binding.etResolvers.setText(top5.joinToString("\n"))
-                    saveCurrentProfileFromUI()
-                    Toast.makeText(this@MainActivity, "Filtered to ${top5.size} fastest resolvers!", Toast.LENGTH_SHORT).show()
+
+            withContext(Dispatchers.Main) {
+                binding.btnTestResolvers.text = "Test Resolvers"
+                scanJob = null
+
+                if (results.isNotEmpty()) {
+                    showHealthyResolversDialog(results, list.size)
+                } else {
+                    Toast.makeText(this@MainActivity, "No responsive resolvers found", Toast.LENGTH_LONG).show()
                 }
             }
         }
+    }
+
+    private fun showHealthyResolversDialog(results: List<Pair<String, Long>>, totalTested: Int) {
+        val messageBuilder = StringBuilder()
+        messageBuilder.append("Found ${results.size} of $totalTested responsive resolvers:\n\n")
+
+        for (i in 0 until minOf(results.size, 15)) {
+            val (addr, ping) = results[i]
+            val badge = when {
+                ping < 120 -> "🟢"
+                ping < 300 -> "🟡"
+                else -> "🟠"
+            }
+            messageBuilder.append("$badge $addr (${ping}ms)\n")
+        }
+        if (results.size > 15) {
+            messageBuilder.append("... and ${results.size - 15} more.\n")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Healthy Resolvers")
+            .setMessage(messageBuilder.toString())
+            .setPositiveButton("Use Fastest 5 (Recommended)") { _, _ ->
+                val top5 = results.take(5).map { it.first }
+                binding.etResolvers.setText(top5.joinToString("\n"))
+                saveCurrentProfileFromUI()
+                Toast.makeText(this, "Applied top ${top5.size} fastest resolvers!", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Use All Working (${results.size})") { _, _ ->
+                val allWorking = results.map { it.first }
+                binding.etResolvers.setText(allWorking.joinToString("\n"))
+                saveCurrentProfileFromUI()
+                Toast.makeText(this, "Applied all ${allWorking.size} working resolvers!", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Copy List") { _, _ ->
+                val allWorking = results.map { it.first }.joinToString("\n")
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("Healthy Resolvers", allWorking))
+                Toast.makeText(this, "Copied ${results.size} healthy resolvers to clipboard!", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    override fun onDestroy() {
+        scanJob?.cancel()
+        super.onDestroy()
     }
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.2\n\n" +
+                "SOAR DNS TUNNEL v1.0.3\n\n" +
                 "Protocol Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +

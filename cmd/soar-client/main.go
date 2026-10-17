@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,7 +72,7 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 			ServerKey: serverKey,
 			Resolvers: resolvers,
 			Discovery: soar.Discovery{
-				Enabled:    true,
+				Enabled:    len(resolvers) == 0,
 				Country:    country,
 				Candidates: resolvers,
 			},
@@ -317,6 +318,11 @@ func main() {
 	logMsg("INFO", "Initializing Soar DNS Tunnel...")
 	logMsg("INFO", "Configured domains (%d): %s", len(cfg.Domains), strings.Join(cfg.Domains, ", "))
 	logMsg("INFO", "Loaded resolvers: %d candidate IPs", len(resolvers))
+	if len(resolvers) > 16 {
+		logMsg("INFO", "Running pre-flight latency ranking to select top responsive resolvers...")
+		resolvers = selectBestResolvers(resolvers, 16)
+		logMsg("INFO", "Selected top %d responsive resolvers: %s", len(resolvers), strings.Join(resolvers, ", "))
+	}
 
 	dialTimeout := time.Duration(cfg.DialTimeoutSeconds * float64(time.Second))
 	if dialTimeout <= 0 {
@@ -437,6 +443,80 @@ func loadResolvers(filename string) []string {
 		}
 	}
 	return nil
+}
+
+func selectBestResolvers(candidates []string, maxKeep int) []string {
+	if len(candidates) <= maxKeep {
+		return candidates
+	}
+	type resPing struct {
+		addr string
+		rtt  time.Duration
+	}
+	ch := make(chan resPing, len(candidates))
+
+	dnsQuery := []byte{
+		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x06, 'g', 'o', 'o', 'g', 'l', 'e',
+		0x03, 'c', 'o', 'm', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+
+	for _, addr := range candidates {
+		go func(a string) {
+			start := time.Now()
+			conn, err := net.DialTimeout("udp", a, 700*time.Millisecond)
+			if err != nil {
+				ch <- resPing{addr: a, rtt: time.Hour}
+				return
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(700 * time.Millisecond))
+			if _, err := conn.Write(dnsQuery); err != nil {
+				ch <- resPing{addr: a, rtt: time.Hour}
+				return
+			}
+			var reply [512]byte
+			if _, err := conn.Read(reply[:]); err != nil {
+				ch <- resPing{addr: a, rtt: time.Hour}
+				return
+			}
+			ch <- resPing{addr: a, rtt: time.Since(start)}
+		}(addr)
+	}
+
+	var healthy []resPing
+	for i := 0; i < len(candidates); i++ {
+		p := <-ch
+		if p.rtt < time.Hour {
+			healthy = append(healthy, p)
+		}
+	}
+
+	slices.SortFunc(healthy, func(a, b resPing) int {
+		return int(a.rtt - b.rtt)
+	})
+
+	var best []string
+	for _, h := range healthy {
+		best = append(best, h.addr)
+		if len(best) >= maxKeep {
+			break
+		}
+	}
+
+	if len(best) < maxKeep {
+		for _, a := range candidates {
+			if !slices.Contains(best, a) {
+				best = append(best, a)
+				if len(best) >= maxKeep {
+					break
+				}
+			}
+		}
+	}
+	return best
 }
 
 func handleSocks5(ctx context.Context, clientConn net.Conn, multiClient *MultiClient, idleTimeout time.Duration) {
