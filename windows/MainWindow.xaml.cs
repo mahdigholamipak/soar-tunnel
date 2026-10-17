@@ -19,7 +19,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.2.0";
+        private const string CurrentVersion = "v1.3.0";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -476,13 +476,33 @@ namespace SoarClient
 
             var appDir = AppContext.BaseDirectory;
             var targetPath = Path.Combine(appDir, "client_config.toml");
+            var resFile = _activeProfile.ResolversFile?.Trim() ?? "";
+            if (resFile.Contains("\n") || resFile.Contains("\r") || (resFile.Contains(":") && !resFile.EndsWith(".txt")))
+            {
+                var customPath = Path.Combine(appDir, "custom_resolvers.txt");
+                var ipLines = resFile.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"));
+                File.WriteAllLines(customPath, ipLines);
+                resFile = "custom_resolvers.txt";
+                _activeProfile.ResolversFile = resFile;
+            }
+            else if (string.IsNullOrEmpty(resFile) || !File.Exists(Path.Combine(appDir, resFile)))
+            {
+                if (File.Exists(Path.Combine(appDir, "client_resolvers.txt")))
+                {
+                    resFile = "client_resolvers.txt";
+                    _activeProfile.ResolversFile = resFile;
+                }
+            }
+
             var cfg = new ClientConfigModel
             {
                 Domains = _activeProfile.Domains,
                 ServerPublicKey = _activeProfile.ServerPublicKey,
                 ListenIP = TxtListenIP.Text.Trim(),
                 ListenPort = _activeProfile.ListenPort,
-                ResolversFile = _activeProfile.ResolversFile
+                ResolversFile = resFile
             };
             ConfigManager.Save(targetPath, cfg);
             _configPath = targetPath;
@@ -1018,22 +1038,51 @@ namespace SoarClient
                 domain = "google.com";
             }
 
-            var filePath = Path.Combine(AppContext.BaseDirectory, TxtResolversFile.Text.Trim());
-            if (!File.Exists(filePath))
-            {
-                AppendLog($"[RESOLVER] Resolvers file not found: {filePath}");
-                MessageBox.Show($"Resolvers file not found:\n{filePath}", "File Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
+            List<string> lines = new List<string>();
+            var rawInput = TxtResolversFile.Text.Trim();
 
-            var lines = File.ReadAllLines(filePath)
-                .Select(l => l.Trim())
-                .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
-                .ToList();
+            // Support pasted multi-line IP lists directly in the text box
+            if (rawInput.Contains("\n") || rawInput.Contains("\r") || (rawInput.Contains(":") && !rawInput.EndsWith(".txt")))
+            {
+                lines = rawInput.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
+                    .ToList();
+
+                var customFile = Path.Combine(AppContext.BaseDirectory, "custom_resolvers.txt");
+                File.WriteAllLines(customFile, lines);
+                TxtResolversFile.Text = "custom_resolvers.txt";
+                AppendLog($"[RESOLVER] Detected raw resolver list ({lines.Count} IPs). Auto-saved to custom_resolvers.txt");
+            }
+            else
+            {
+                var filePath = Path.Combine(AppContext.BaseDirectory, rawInput);
+                if (!File.Exists(filePath))
+                {
+                    var defaultPath = Path.Combine(AppContext.BaseDirectory, "client_resolvers.txt");
+                    if (File.Exists(defaultPath))
+                    {
+                        filePath = defaultPath;
+                        TxtResolversFile.Text = "client_resolvers.txt";
+                        AppendLog($"[RESOLVER] Specified file not found, falling back to: client_resolvers.txt");
+                    }
+                    else
+                    {
+                        AppendLog($"[RESOLVER] Resolvers file not found: {filePath}");
+                        MessageBox.Show($"Resolvers file not found:\n{filePath}", "File Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+
+                lines = File.ReadAllLines(filePath)
+                    .Select(l => l.Trim())
+                    .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
+                    .ToList();
+            }
 
             if (lines.Count == 0)
             {
-                AppendLog($"[RESOLVER] No candidate resolvers found in: {filePath}");
+                AppendLog("[RESOLVER] No candidate resolvers found.");
                 return;
             }
 

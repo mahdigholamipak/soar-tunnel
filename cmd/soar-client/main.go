@@ -143,13 +143,27 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 		perDialTimeout = 4 * time.Second
 	}
 
+	// Check if all domains are in temporary backoff; if so, reset backoff to avoid complete deadlock
+	allInBackoff := true
+	for _, e := range m.clients {
+		if e.failures.Load() < 3 || time.Since(e.lastFail) >= 15*time.Second {
+			allInBackoff = false
+			break
+		}
+	}
+	if allInBackoff {
+		for _, e := range m.clients {
+			e.failures.Store(1)
+		}
+	}
+
 	var lastErr error
 	for i := 0; i < count; i++ {
 		idx := (startIdx + i) % count
 		entry := m.clients[idx]
 
 		// Skip temporarily if recent consecutive failures and more domains are available
-		if count > 1 && entry.failures.Load() >= 3 && time.Since(entry.lastFail) < 30*time.Second {
+		if count > 1 && entry.failures.Load() >= 3 && time.Since(entry.lastFail) < 15*time.Second {
 			continue
 		}
 
@@ -176,6 +190,9 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 		}
 	}
 
+	if lastErr == nil {
+		lastErr = context.DeadlineExceeded
+	}
 	return nil, "", fmt.Errorf("all domains failed to dial %s: %w", addr, lastErr)
 }
 

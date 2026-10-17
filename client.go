@@ -211,6 +211,8 @@ type path struct {
 	// by data queries, which the server answers at once, may just be held.
 	maxPollAnswered uint64
 	ednsSize        uint16
+	rateLimitHits   int
+	cooldownUntil   time.Time
 }
 
 type pendingQuery struct {
@@ -586,7 +588,7 @@ func (c *Client) nextDeadlineLocked(now time.Time) time.Duration {
 }
 
 func (p *path) usable(now time.Time) bool {
-	return !p.dead && !p.suspended.After(now) && (p.tcp == nil || p.tcp.up.Load())
+	return !p.dead && !p.suspended.After(now) && !p.cooldownUntil.After(now) && (p.tcp == nil || p.tcp.up.Load())
 }
 
 // rto is how long a query on p may take before it's presumed lost, excluding any hold.
@@ -619,6 +621,7 @@ func (p *path) record(lost bool) {
 func (p *path) onSuccess(now time.Time, rtt time.Duration, maxWin int) {
 	p.record(false)
 	p.consec = 0
+	p.rateLimitHits = 0
 	p.verified = true
 	p.lastSuccess = now
 	p.successes++
@@ -907,12 +910,21 @@ func (c *Client) failLocked(q *pendingQuery, now time.Time, refused bool) {
 		if refused {
 			p.consec += 2
 		}
+		// Adaptive AIMD rate limiting on SERVFAIL or Refused (resolver RRL protection):
+		if q.errRcode == rcodeServFail || q.errRcode == rcodeRefused {
+			p.rateLimitHits++
+			p.cwnd = 1
+			p.cooldownUntil = now.Add(min(time.Duration(p.rateLimitHits)*3*time.Second, 15*time.Second))
+		}
 		p.onLoss(now)
 		p.sizeOutcome(q.class, true, now)
 		// Never suspend every path: with nothing in flight nothing can recover, and the
 		// session would be presumed lost. The last usable one keeps probing at a window of 1.
 		if p.suspended.After(now) && !c.anyUsableLocked(now) {
 			p.suspended = time.Time{}
+		}
+		if p.cooldownUntil.After(now) && !c.anyUsableLocked(now) {
+			p.cooldownUntil = time.Time{}
 		}
 	}
 	if q.hello || q.sess == nil || q.sess.session == nil {

@@ -479,7 +479,11 @@ func (ss *srvSession) onQuery(q *query, addr net.Addr, p []byte) {
 		ss.lastSeen = now
 		ss.used.Store(true)
 	}
-	hq := &heldQuery{q: q, addr: addr, upPN: pn, limit: min(512+48*limitClass, q.edns), at: now}
+	limit := min(512+48*limitClass, q.edns)
+	if limitClass == 15 && q.edns > 1232 {
+		limit = min(q.edns, 1400)
+	}
+	hq := &heldQuery{q: q, addr: addr, upPN: pn, limit: limit, at: now}
 	hold := min(time.Duration(holdClass)*100*time.Millisecond, ss.srv.cfg.MaxHold)
 	var out []sendItem
 	if ss.abandoned.contains(pn) {
