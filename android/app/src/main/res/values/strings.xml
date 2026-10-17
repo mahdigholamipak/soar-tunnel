@@ -3,6 +3,7 @@
     <string name="server_key">Server Public Key</string>
     <string name="tunnel_domains">Tunnel Domains (comma-separated)</string>
     <string name="socks_port">SOCKS5 Port</string>
+    <string name="dns_resolvers">DNS Resolvers (one per line or IP:port)</string>
     <string name="connect">CONNECT</string>
     <string name="disconnect">DISCONNECT</string>
     <string name="status_disconnected">Disconnected</string>

@@ -35,16 +35,19 @@ object TunnelProcessManager {
         val resolversFile = File(filesDir, "client_resolvers.txt")
 
         // 1. Prepare resolvers file
-        if (resolvers.isNotBlank()) {
-            resolversFile.writeText(resolvers)
+        val cleanResolvers = resolvers.split("\n", ",", ";")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+
+        if (cleanResolvers.isNotBlank()) {
+            resolversFile.writeText(cleanResolvers + "\n")
         } else {
             // Write default resolvers if missing
-            if (!resolversFile.exists()) {
-                resolversFile.writeText(
-                    "1.1.1.1:53\n1.0.0.1:53\n8.8.8.8:53\n8.8.4.4:53\n" +
-                    "178.22.122.100:53\n185.51.200.2:53\n10.202.10.202:53\n"
-                )
-            }
+            resolversFile.writeText(
+                "1.1.1.1:53\n1.0.0.1:53\n8.8.8.8:53\n8.8.4.4:53\n" +
+                "178.22.122.100:53\n185.51.200.2:53\n10.202.10.202:53\n"
+            )
         }
 
         // 2. Prepare TOML config
@@ -149,7 +152,7 @@ object TunnelProcessManager {
             }
         }
 
-        log("[ERROR] Native executable libsoar.so not found in ${nativeDir.absolutePath}")
+        log("[ERROR] Native executable libsoar.so not found in ${nativeDir.absolutePath}. Files present: ${filesInLib?.map { it.name } ?: "none"}")
         return null
     }
 }

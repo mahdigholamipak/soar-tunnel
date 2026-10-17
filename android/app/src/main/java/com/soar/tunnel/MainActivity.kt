@@ -13,6 +13,17 @@ import com.soar.tunnel.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val DEFAULT_RESOLVERS =
+            "1.1.1.1:53\n" +
+            "1.0.0.1:53\n" +
+            "8.8.8.8:53\n" +
+            "8.8.4.4:53\n" +
+            "178.22.122.100:53\n" +
+            "185.51.200.2:53\n" +
+            "10.202.10.202:53"
+    }
+
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("soar_prefs", Context.MODE_PRIVATE) }
 
@@ -31,6 +42,8 @@ class MainActivity : AppCompatActivity() {
         binding.etServerKey.setText(prefs.getString("server_key", ""))
         binding.etDomains.setText(prefs.getString("domains", ""))
         binding.etPort.setText(prefs.getInt("port", 10850).toString())
+        val savedResolvers = prefs.getString("resolvers", null)
+        binding.etResolvers.setText(if (savedResolvers.isNullOrBlank()) DEFAULT_RESOLVERS else savedResolvers)
     }
 
     private fun saveSettings() {
@@ -38,6 +51,7 @@ class MainActivity : AppCompatActivity() {
             putString("server_key", binding.etServerKey.text.toString().trim())
             putString("domains", binding.etDomains.text.toString().trim())
             putInt("port", binding.etPort.text.toString().toIntOrNull() ?: 10850)
+            putString("resolvers", binding.etResolvers.text.toString().trim())
             apply()
         }
     }
@@ -78,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         val key = binding.etServerKey.text.toString().trim()
         val domains = binding.etDomains.text.toString().trim()
         val port = binding.etPort.text.toString().toIntOrNull() ?: 10850
+        val resolvers = binding.etResolvers.text.toString().trim()
 
         if (key.isEmpty()) {
             Toast.makeText(this, "Please enter Server Public Key", Toast.LENGTH_SHORT).show()
@@ -95,6 +110,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(SoarService.EXTRA_KEY, key)
             putExtra(SoarService.EXTRA_DOMAINS, domains)
             putExtra(SoarService.EXTRA_PORT, port)
+            putExtra(SoarService.EXTRA_RESOLVERS, resolvers)
         }
         ContextCompat.startForegroundService(this, serviceIntent)
         updateUIState(true)

@@ -127,6 +127,7 @@
                 android:hint="@string/socks_port"
                 android:textColorHint="@color/text_muted"
                 app:boxStrokeColor="@color/primary_accent"
+                android:layout_marginBottom="8dp"
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
 
                 <com.google.android.material.textfield.TextInputEditText
@@ -137,6 +138,27 @@
                     android:inputType="number"
                     android:textColor="@color/text_light"
                     android:textSize="12sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- DNS Resolvers -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/dns_resolvers"
+                android:textColorHint="@color/text_muted"
+                app:boxStrokeColor="@color/primary_accent"
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etResolvers"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_light"
+                    android:textSize="11sp"
+                    android:inputType="textMultiLine"
+                    android:lines="3"
+                    android:maxLines="5"
+                    android:gravity="top|start" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>

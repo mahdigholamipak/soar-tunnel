@@ -43,6 +43,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm64 ./cmd/soar-client
           CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-arm ./cmd/soar-client
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-amd64 ./cmd/soar-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -trimpath -ldflags="-s -w" -o dist/android-assets/soar-client-386 ./cmd/soar-client
 
       - name: Upload Core Binaries
         uses: actions/upload-artifact@v4
@@ -110,9 +111,11 @@ jobs:
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
           mkdir -p android/app/src/main/jniLibs/armeabi-v7a
           mkdir -p android/app/src/main/jniLibs/x86_64
+          mkdir -p android/app/src/main/jniLibs/x86
           cp dist/android-assets/soar-client-arm64 android/app/src/main/jniLibs/arm64-v8a/libsoar.so
           cp dist/android-assets/soar-client-arm android/app/src/main/jniLibs/armeabi-v7a/libsoar.so
           cp dist/android-assets/soar-client-amd64 android/app/src/main/jniLibs/x86_64/libsoar.so
+          cp dist/android-assets/soar-client-386 android/app/src/main/jniLibs/x86/libsoar.so
           chmod +x android/app/src/main/jniLibs/*/libsoar.so
           mkdir -p android/app/src/main/assets
           cp configs/client_resolvers.sample.txt android/app/src/main/assets/client_resolvers.txt
@@ -177,3 +180,5 @@ jobs:
           files: |
             release-assets/*
           generate_release_notes: true
+          make_latest: true
+          overwrite: true
