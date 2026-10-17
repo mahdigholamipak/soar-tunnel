@@ -152,6 +152,37 @@ Soar Tunnel features an intelligent **Multi-Domain Dial Engine**:
 
 ---
 
+#### Server Management & One-Line Updates:
+Run the `soar` command anytime on your VPS to open the management dashboard:
+```bash
+soar              # Open interactive server management menu
+soar status       # Check service status, active IP, and domains
+soar share        # Display standard connection link & terminal QR code
+soar share-locked # Generate privacy-protected locked share link (hides domains/keys)
+soar update       # Single-command update to latest GitHub release
+soar logs         # Follow live server traffic logs
+```
+
+To update the server directly in one line from anywhere:
+```bash
+curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scripts/install.sh | bash -s -- --update
+```
+
+---
+
+## 🙏 Credits & Attribution
+
+This project is built directly upon the core **Soar** loss-tolerant DNS tunneling protocol invented and open-sourced by **Lantern** ([github.com/getlantern/soar](https://github.com/getlantern/soar)) under the Apache License 2.0. We deeply appreciate the Lantern engineering team for their groundbreaking research in censorship evasion and loss-tolerant transport over DNS.
+
+This ecosystem extends the foundational protocol with:
+- Multi-domain failover and concurrent racing
+- Dynamic resolver latency probing and ranking
+- Windows GUI client with System Tray & Live Telemetry
+- Android SOCKS5 proxy client with in-app updates and persistent signing
+- Privacy-preserving locked configuration sharing (`soar://locked`)
+
+---
+
 ## 📄 License
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.

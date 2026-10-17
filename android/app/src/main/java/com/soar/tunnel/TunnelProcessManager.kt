@@ -6,7 +6,6 @@ import android.util.Log
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStreamReader
 
 object TunnelProcessManager {
@@ -16,6 +15,7 @@ object TunnelProcessManager {
     private var scope = CoroutineScope(Dispatchers.IO + supervisorJob)
 
     var onLogReceived: ((String) -> Unit)? = null
+    var onTelemetryReceived: ((String) -> Unit)? = null
     var onStatusChanged: ((Boolean) -> Unit)? = null
 
     val isRunning: Boolean
@@ -31,6 +31,13 @@ object TunnelProcessManager {
         if (isRunning) return true
 
         val filesDir = context.filesDir
+
+        // Clean up legacy files from old versions if any
+        val legacyBinary = File(filesDir, "soar-client")
+        if (legacyBinary.exists()) {
+            try { legacyBinary.delete() } catch (e: Exception) { }
+        }
+
         val configFile = File(filesDir, "client_config.toml")
         val resolversFile = File(filesDir, "client_resolvers.txt")
 
@@ -46,7 +53,7 @@ object TunnelProcessManager {
             // Write default resolvers if missing
             resolversFile.writeText(
                 "1.1.1.1:53\n1.0.0.1:53\n8.8.8.8:53\n8.8.4.4:53\n" +
-                "178.22.122.100:53\n185.51.200.2:53\n10.202.10.202:53\n"
+                "178.22.122.100:53\n185.51.200.2:53\n10.202.10.202:53\n217.218.155.155:53\n"
             )
         }
 
@@ -64,10 +71,10 @@ object TunnelProcessManager {
         """.trimIndent()
         configFile.writeText(tomlContent)
 
-        // 3. Locate or extract binary
+        // 3. Locate native library executable
         val binaryFile = getOrExtractBinary(context)
         if (binaryFile == null || !binaryFile.exists()) {
-            log("[ERROR] soar-client binary could not be found or extracted.")
+            log("[ERROR] soar native library could not be located in nativeLibraryDir.")
             return false
         }
 
@@ -81,7 +88,11 @@ object TunnelProcessManager {
         try {
             val pb = ProcessBuilder(
                 binaryFile.absolutePath,
-                "-config", configFile.absolutePath
+                "-config", configFile.absolutePath,
+                "-zones", domains.trim(),
+                "-pubkey", serverKey.trim(),
+                "-resolvers", resolversFile.absolutePath,
+                "-listen", "127.0.0.1:$port"
             )
             pb.directory(filesDir)
             pb.redirectErrorStream(true)
@@ -89,13 +100,19 @@ object TunnelProcessManager {
             process = pb.start()
             onStatusChanged?.invoke(true)
 
-            // Start log reading coroutine
+            // Start log and telemetry reading coroutine
             scope.launch {
                 val reader = BufferedReader(InputStreamReader(process?.inputStream))
                 try {
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        line?.let { log(it) }
+                        line?.let { l ->
+                            if (l.startsWith("[TELEMETRY]")) {
+                                onTelemetryReceived?.invoke(l)
+                            } else {
+                                log(l)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     log("[PROCESS] Stream closed: ${e.message}")
@@ -140,7 +157,7 @@ object TunnelProcessManager {
             return libFile
         }
 
-        // Secondary check: look for any executable in nativeLibraryDir
+        // Secondary check: look for any candidate in nativeLibraryDir
         val filesInLib = nativeDir.listFiles()
         if (filesInLib != null) {
             for (f in filesInLib) {

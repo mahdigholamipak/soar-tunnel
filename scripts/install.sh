@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Soar DNS Tunnel - Automated Server Installer
+# Soar DNS Tunnel - Automated Server Installer & Management Tool
+# Based on the foundational Soar protocol by Lantern (https://github.com/getlantern/soar)
+# Licensed under Apache License 2.0
 # Supported OS: Ubuntu 20.04+, Debian 11+, CentOS 8+, AlmaLinux, RockyLinux
 # ==============================================================================
 
@@ -11,11 +13,78 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
-echo -e "${CYAN}=====================================================${NC}"
-echo -e "${CYAN}        Soar DNS Tunnel - Server Installer           ${NC}"
-echo -e "${CYAN}=====================================================${NC}"
+REPO="mahdigholamipak/soar-tunnel"
+INSTALL_DIR="/usr/local/bin"
+BIN_PATH="$INSTALL_DIR/soar-server"
+CONFIG_DIR="/etc/soar"
+KEY_PATH="$CONFIG_DIR/server.key"
+CONF_PATH="$CONFIG_DIR/server.conf"
+CLI_PATH="$INSTALL_DIR/soar"
+
+# ------------------------------------------------------------------------------
+# Helper: Detect Architecture
+# ------------------------------------------------------------------------------
+detect_arch() {
+    ARCH_RAW=$(uname -m)
+    case "$ARCH_RAW" in
+        x86_64|amd64)
+            ARCH="amd64"
+            ;;
+        aarch64|arm64)
+            ARCH="arm64"
+            ;;
+        *)
+            echo -e "${RED}[ERROR] Unsupported architecture: $ARCH_RAW${NC}"
+            exit 1
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# Helper: One-Line Auto Update
+# ------------------------------------------------------------------------------
+do_update() {
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${CYAN}      Checking for Soar Server Updates...            ${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    detect_arch
+    
+    echo -e "${BLUE}[INFO] Querying latest release from GitHub...${NC}"
+    LATEST_JSON=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest")
+    LATEST_TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | head -n 1 | cut -d'"' -f4)
+    
+    if [ -z "$LATEST_TAG" ]; then
+        echo -e "${RED}[ERROR] Could not determine latest version from GitHub.${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}[INFO] Latest available release: ${LATEST_TAG}${NC}"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/soar-server-linux-${ARCH}"
+    
+    TMP_BIN="/tmp/soar-server-new"
+    echo -e "${BLUE}[INFO] Downloading ${DOWNLOAD_URL}...${NC}"
+    if curl -fL --progress-bar -o "$TMP_BIN" "$DOWNLOAD_URL"; then
+        chmod +x "$TMP_BIN"
+        systemctl stop soar 2>/dev/null || true
+        mv -f "$TMP_BIN" "$BIN_PATH"
+        systemctl daemon-reload
+        systemctl restart soar
+        echo -e "${GREEN}[OK] Soar Server successfully updated to ${LATEST_TAG} and restarted!${NC}"
+    else
+        echo -e "${RED}[ERROR] Failed to download update binary.${NC}"
+        rm -f "$TMP_BIN"
+        exit 1
+    fi
+    exit 0
+}
+
+# Check if called with --update or update
+if [ "$1" = "--update" ] || [ "$1" = "update" ]; then
+    do_update
+fi
 
 # 1. Root check
 if [ "$EUID" -ne 0 ]; then
@@ -23,20 +92,13 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+echo -e "${CYAN}=====================================================${NC}"
+echo -e "${CYAN}        Soar DNS Tunnel - Server Installer           ${NC}"
+echo -e "${CYAN}   Based on Lantern Soar Protocol (Apache 2.0)       ${NC}"
+echo -e "${CYAN}=====================================================${NC}"
+
 # 2. Detect Architecture
-ARCH_RAW=$(uname -m)
-case "$ARCH_RAW" in
-    x86_64|amd64)
-        ARCH="amd64"
-        ;;
-    aarch64|arm64)
-        ARCH="arm64"
-        ;;
-    *)
-        echo -e "${RED}[ERROR] Unsupported architecture: $ARCH_RAW${NC}"
-        exit 1
-        ;;
-esac
+detect_arch
 echo -e "${GREEN}[OK] Detected architecture: $ARCH ($ARCH_RAW)${NC}"
 
 # 3. Detect Public IP
@@ -45,26 +107,23 @@ echo -e "${GREEN}[OK] Detected Server IP: $SERVER_IP${NC}"
 
 # 4. Check & Install Dependencies
 echo -e "${BLUE}[INFO] Checking required utilities...${NC}"
-if ! command -v curl &> /dev/null; then
-    if command -v apt-get &> /dev/null; then
-        apt-get update -y && apt-get install -y curl iptables
-    elif command -v dnf &> /dev/null; then
-        dnf install -y curl iptables
-    elif command -v yum &> /dev/null; then
-        yum install -y curl iptables
-    fi
+PKG_CMD=""
+if command -v apt-get &> /dev/null; then
+    PKG_CMD="apt-get"
+    apt-get update -y >/dev/null 2>&1
+    apt-get install -y curl iptables qrencode jq >/dev/null 2>&1 || true
+elif command -v dnf &> /dev/null; then
+    PKG_CMD="dnf"
+    dnf install -y curl iptables qrencode jq >/dev/null 2>&1 || true
+elif command -v yum &> /dev/null; then
+    PKG_CMD="yum"
+    yum install -y curl iptables qrencode jq >/dev/null 2>&1 || true
 fi
 
-# 5. Download or Copy Binary
-INSTALL_DIR="/usr/local/bin"
-BIN_PATH="$INSTALL_DIR/soar-server"
-CONFIG_DIR="/etc/soar"
-KEY_PATH="$CONFIG_DIR/server.key"
-
+# 5. Download Binary
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$INSTALL_DIR"
 
-# Check if running from cloned repository
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_BIN="$SCRIPT_DIR/../soar-server"
 
@@ -72,8 +131,6 @@ if [ -f "$LOCAL_BIN" ]; then
     echo -e "${BLUE}[INFO] Found local binary at $LOCAL_BIN, installing...${NC}"
     cp -f "$LOCAL_BIN" "$BIN_PATH"
 else
-    # Default GitHub repository release URL
-    REPO="mahdigholamipak/soar-tunnel"
     DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/soar-server-linux-${ARCH}"
     echo -e "${BLUE}[INFO] Fetching latest release binary from GitHub (${DOWNLOAD_URL})...${NC}"
     if ! curl -fsSL -o "$BIN_PATH" "$DOWNLOAD_URL"; then
@@ -84,7 +141,6 @@ else
             go build -trimpath -ldflags="-s -w" -o "$BIN_PATH" ./cmd/soar-server
         else
             echo -e "${RED}[ERROR] Failed to download pre-built binary and Go compiler is not installed.${NC}"
-            echo -e "${YELLOW}Please upload the soar-server binary to $BIN_PATH manually.${NC}"
             exit 1
         fi
     fi
@@ -121,6 +177,14 @@ else
     done
 fi
 
+# Save config info
+cat <<EOF > "$CONF_PATH"
+SERVER_IP="$SERVER_IP"
+ZONES="$ZONES"
+PUB_KEY="$PUB_KEY"
+EOF
+chmod 600 "$CONF_PATH"
+
 # 8. Check Port 53 UDP Availability
 LISTEN_PORT=53
 PORT_CONFLICT=false
@@ -148,7 +212,7 @@ fi
 SERVICE_FILE="/etc/systemd/system/soar.service"
 cat <<EOF > "$SERVICE_FILE"
 [Unit]
-Description=Soar High-Performance DNS Tunnel Server
+Description=Soar High-Performance DNS Tunnel Server (Lantern Protocol)
 After=network.target
 
 [Service]
@@ -175,7 +239,211 @@ else
     exit 1
 fi
 
-# 10. Summary & Cloudflare Setup Instructions
+# 10. Install Management CLI (/usr/local/bin/soar)
+cat << 'EOFSCRIPT' > "$CLI_PATH"
+#!/usr/bin/env bash
+# Soar DNS Tunnel Server Management CLI
+set -e
+
+CONFIG_DIR="/etc/soar"
+CONF_PATH="$CONFIG_DIR/server.conf"
+KEY_PATH="$CONFIG_DIR/server.key"
+BIN_PATH="/usr/local/bin/soar-server"
+REPO="mahdigholamipak/soar-tunnel"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m'
+
+if [ -f "$CONF_PATH" ]; then
+    source "$CONF_PATH"
+fi
+
+if [ -f "$KEY_PATH" ] && [ -x "$BIN_PATH" ]; then
+    PUB_KEY=$("$BIN_PATH" pubkey "$KEY_PATH" 2>/dev/null || echo "$PUB_KEY")
+fi
+
+build_standard_link() {
+    local name="SoarServer"
+    local encoded_zones=$(echo "$ZONES" | tr -d ' ' | sed 's/,/%2C/g')
+    local encoded_key=$(echo "$PUB_KEY" | tr -d '\n\r' | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
+    echo "soar://profile?name=${name}&domains=${encoded_zones}&key=${encoded_key}&port=10850"
+}
+
+build_locked_payload() {
+    # Generate encrypted/locked base64 payload
+    local json="{\"name\":\"Protected Server\",\"domains\":[\"$(echo "$ZONES" | sed 's/,/\",\"/g')\"],\"key\":\"$PUB_KEY\",\"port\":10850,\"locked\":true}"
+    local b64=$(echo -n "$json" | base64 | tr -d '\n\r')
+    echo "soar://locked?name=Protected+Server&data=${b64}"
+}
+
+print_qr() {
+    local text="$1"
+    if command -v qrencode &>/dev/null; then
+        qrencode -t ANSI256 "$text" || qrencode -t UTF8 "$text"
+    else
+        echo -e "${YELLOW}(Install 'qrencode' to see a terminal QR code: apt install qrencode)${NC}"
+    fi
+}
+
+show_status() {
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${CYAN}             Soar Server Status                      ${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    if systemctl is-active --quiet soar; then
+        echo -e "Service Status:     ${GREEN}ACTIVE (Running)${NC}"
+    else
+        echo -e "Service Status:     ${RED}INACTIVE (Stopped)${NC}"
+    fi
+    echo -e "Server Public IP:   ${GREEN}${SERVER_IP:-Unknown}${NC}"
+    echo -e "Tunnel Domains:     ${GREEN}${ZONES:-None}${NC}"
+    echo -e "Public Key:         ${GREEN}${PUB_KEY:-Unknown}${NC}"
+    echo -e "Systemd Service:    soar.service"
+    echo -e "${CYAN}-----------------------------------------------------${NC}"
+}
+
+show_share() {
+    local link=$(build_standard_link)
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${GREEN}          Client Connection Link (Standard)          ${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "Direct Link (click or copy into client):"
+    echo -e "${YELLOW}$link${NC}"
+    echo ""
+    echo -e "Terminal QR Code:"
+    print_qr "$link"
+    echo ""
+    echo -e "Manual TOML config snippet:"
+    echo -e "DOMAINS = [\"$(echo "$ZONES" | sed 's/,/", "/g')\"]"
+    echo -e "SERVER_PUBLIC_KEY = \"$PUB_KEY\""
+    echo -e "LISTEN_IP = \"127.0.0.1\""
+    echo -e "LISTEN_PORT = 10850"
+    echo -e "${CYAN}=====================================================${NC}"
+}
+
+show_locked_share() {
+    local locked_link=$(build_locked_payload)
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${MAGENTA}     Privacy-Protected / Locked Share Link           ${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${YELLOW}Notice: This link hides your domain and key in the client UI.${NC}"
+    echo -e "${YELLOW}The recipient can connect and re-share without seeing raw server details.${NC}"
+    echo ""
+    echo -e "Locked Share Link:"
+    echo -e "${CYAN}$locked_link${NC}"
+    echo ""
+    echo -e "Terminal QR Code:"
+    print_qr "$locked_link"
+    echo -e "${CYAN}=====================================================${NC}"
+}
+
+update_server() {
+    echo -e "${CYAN}Updating Soar Server from GitHub Releases...${NC}"
+    ARCH_RAW=$(uname -m)
+    case "$ARCH_RAW" in
+        x86_64|amd64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *) echo -e "${RED}Unsupported architecture: $ARCH_RAW${NC}"; exit 1 ;;
+    esac
+    
+    LATEST_JSON=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest")
+    LATEST_TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | head -n 1 | cut -d'"' -f4)
+    
+    if [ -z "$LATEST_TAG" ]; then
+        echo -e "${RED}Could not fetch latest release tag.${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}Found latest release: $LATEST_TAG${NC}"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/soar-server-linux-${ARCH}"
+    TMP_BIN="/tmp/soar-server-update"
+    
+    if curl -fL --progress-bar -o "$TMP_BIN" "$DOWNLOAD_URL"; then
+        chmod +x "$TMP_BIN"
+        systemctl stop soar 2>/dev/null || true
+        mv -f "$TMP_BIN" "$BIN_PATH"
+        systemctl restart soar
+        echo -e "${GREEN}Soar server updated to $LATEST_TAG successfully!${NC}"
+    else
+        echo -e "${RED}Download failed.${NC}"
+        rm -f "$TMP_BIN"
+        exit 1
+    fi
+}
+
+case "$1" in
+    status)
+        show_status
+        ;;
+    restart)
+        systemctl restart soar
+        echo -e "${GREEN}Soar server restarted.${NC}"
+        ;;
+    start)
+        systemctl start soar
+        echo -e "${GREEN}Soar server started.${NC}"
+        ;;
+    stop)
+        systemctl stop soar
+        echo -e "${YELLOW}Soar server stopped.${NC}"
+        ;;
+    logs)
+        journalctl -u soar -f
+        ;;
+    share)
+        show_share
+        ;;
+    share-locked|locked)
+        show_locked_share
+        ;;
+    qr)
+        print_qr "$(build_standard_link)"
+        ;;
+    update)
+        update_server
+        ;;
+    *)
+        # Interactive Menu
+        clear
+        echo -e "${CYAN}=====================================================${NC}"
+        echo -e "${CYAN}      Soar DNS Tunnel - Server Management            ${NC}"
+        echo -e "${CYAN}   Based on Lantern Soar Protocol (Apache 2.0)       ${NC}"
+        echo -e "${CYAN}=====================================================${NC}"
+        echo -e "1) Service Status & Information"
+        echo -e "2) View Live Logs"
+        echo -e "3) Restart Soar Service"
+        echo -e "4) Stop Soar Service"
+        echo -e "5) Start Soar Service"
+        echo -e "6) Show Standard Connection Link & QR"
+        echo -e "7) Show Privacy-Protected Locked Link (Hidden Domain)"
+        echo -e "8) Update Server to Latest GitHub Release"
+        echo -e "0) Exit"
+        echo -e "${CYAN}=====================================================${NC}"
+        read -r -p "Select option [0-8]: " OPT
+        case "$OPT" in
+            1) show_status ;;
+            2) journalctl -u soar -f ;;
+            3) systemctl restart soar ; echo -e "${GREEN}Restarted.${NC}" ;;
+            4) systemctl stop soar ; echo -e "${YELLOW}Stopped.${NC}" ;;
+            5) systemctl start soar ; echo -e "${GREEN}Started.${NC}" ;;
+            6) show_share ;;
+            7) show_locked_share ;;
+            8) update_server ;;
+            0) exit 0 ;;
+            *) echo -e "${RED}Invalid option.${NC}" ;;
+        esac
+        ;;
+esac
+EOFSCRIPT
+
+chmod +x "$CLI_PATH"
+echo -e "${GREEN}[OK] Installed Soar CLI tool: run 'soar' anytime to manage your server!${NC}"
+
+# 11. Final Summary
 FIRST_ZONE=$(echo "$ZONES" | cut -d',' -f1 | tr -d ' ')
 DOMAIN_ROOT=$(echo "$FIRST_ZONE" | awk -F. '{print $(NF-1)"."$NF}')
 
@@ -183,38 +451,16 @@ echo ""
 echo -e "${CYAN}=====================================================${NC}"
 echo -e "${GREEN}      Soar Server Successfully Installed!            ${NC}"
 echo -e "${CYAN}=====================================================${NC}"
-echo ""
-echo -e "${YELLOW}1. Your Server Details:${NC}"
+echo -e "${YELLOW}Server Details:${NC}"
 echo -e "   - Public IP:       ${GREEN}$SERVER_IP${NC}"
 echo -e "   - Tunnel Zones:    ${GREEN}$ZONES${NC}"
 echo -e "   - Server PubKey:   ${GREEN}$PUB_KEY${NC}"
 echo -e "   - Listen UDP Port: ${GREEN}:$LISTEN_PORT${NC}"
 echo ""
-echo -e "${YELLOW}2. Cloudflare DNS Setup (CRITICAL STEP):${NC}"
-echo -e "   In your Cloudflare dashboard for ${CYAN}$DOMAIN_ROOT${NC}, add these 2 DNS records:"
+echo -e "${YELLOW}Quick Management:${NC}"
+echo -e "   - Open Control Menu:     ${GREEN}soar${NC}"
+echo -e "   - Show Client Link & QR: ${GREEN}soar share${NC}"
+echo -e "   - Privacy-Protected Link:${GREEN}soar share-locked${NC}"
+echo -e "   - One-Line Auto Update:  ${GREEN}soar update${NC}"
 echo ""
-echo -e "   Record 1 (Glue A Record):"
-echo -e "     - Type:    ${GREEN}A${NC}"
-echo -e "     - Name:    ${GREEN}ns.${FIRST_ZONE#*.} (or ns)${NC}"
-echo -e "     - Target:  ${GREEN}$SERVER_IP${NC}"
-echo -e "     - Proxy:   ${RED}DNS only (Grey Cloud - OFF)${NC}"
-echo ""
-echo -e "   Record 2 (Delegation NS Record):"
-echo -e "     - Type:    ${GREEN}NS${NC}"
-echo -e "     - Name:    ${GREEN}${FIRST_ZONE%%.*}${NC} (e.g. 's' for s.$DOMAIN_ROOT)"
-echo -e "     - Target:  ${GREEN}ns.$DOMAIN_ROOT${NC}"
-echo ""
-echo -e "${YELLOW}3. Client Configuration Snippet (for client_config.toml):${NC}"
-echo -e "-----------------------------------------------------"
-echo -e "DOMAINS = [\"$(echo "$ZONES" | sed 's/,/", "/g')\"]"
-echo -e "SERVER_PUBLIC_KEY = \"$PUB_KEY\""
-echo -e "LISTEN_IP = \"127.0.0.1\""
-echo -e "LISTEN_PORT = 10850"
-echo -e "RESOLVERS_FILE = \"client_resolvers.txt\""
-echo -e "STREAM_IDLE_TIMEOUT_SECONDS = 60.0"
-echo -e "-----------------------------------------------------"
-echo ""
-echo -e "${GREEN}Done! You can manage the service anytime with:${NC}"
-echo -e "  systemctl status soar"
-echo -e "  journalctl -u soar -f"
 echo -e "${CYAN}=====================================================${NC}"

@@ -14,4 +14,13 @@
     <string name="clear_logs">Clear Logs</string>
     <string name="notification_title">Soar DNS Tunnel Active</string>
     <string name="notification_text">SOCKS5 Proxy listening on 127.0.0.1:%1$d</string>
+
+    <string name="server_profiles">Server Profiles</string>
+    <string name="add_profile">Add Server</string>
+    <string name="delete_profile">Delete Server</string>
+    <string name="share_profile">Share Profile</string>
+    <string name="import_link">Import Link</string>
+    <string name="test_latency">Test Resolvers Latency</string>
+    <string name="check_updates">Check Updates</string>
+    <string name="about">About Soar</string>
 </resources>

@@ -6,12 +6,14 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -160,6 +162,8 @@ func main() {
 	listen := flag.String("listen", "", "local address for SOCKS5 proxy (e.g. 127.0.0.1:10850)")
 	country := flag.String("country", "", "country code for built-in discovery (e.g. IR)")
 	idleSecs := flag.Float64("idle-timeout", 0, "idle stream timeout in seconds (default 60)")
+	urlFlag := flag.String("url", "", "soar:// profile or locked link to import configuration from")
+	flag.StringVar(urlFlag, "u", "", "alias for -url")
 	verbose := flag.Bool("v", false, "debug logging")
 	flag.Parse()
 
@@ -190,7 +194,56 @@ func main() {
 		}
 	}
 
-	// 2. Command line overrides
+	// 2. URL overrides (soar://profile or soar://locked)
+	if *urlFlag != "" {
+		u := strings.TrimSpace(*urlFlag)
+		if strings.HasPrefix(u, "soar://profile?") {
+			rawQuery := strings.TrimPrefix(u, "soar://profile?")
+			if vals, err := url.ParseQuery(rawQuery); err == nil {
+				if d := vals.Get("domains"); d != "" {
+					cfg.Domains = parseStringArray(d)
+				}
+				if k := vals.Get("key"); k != "" {
+					cfg.ServerPublicKey = cleanString(k)
+				}
+				if p := vals.Get("port"); p != "" {
+					if pi, err := strconv.Atoi(p); err == nil && pi > 0 {
+						cfg.ListenPort = pi
+					}
+				}
+				logMsg("INFO", "Parsed configuration from soar://profile URL")
+			}
+		} else if strings.HasPrefix(u, "soar://locked?") {
+			rawQuery := strings.TrimPrefix(u, "soar://locked?")
+			if vals, err := url.ParseQuery(rawQuery); err == nil {
+				if data := vals.Get("data"); data != "" {
+					if decoded, err := base64.StdEncoding.DecodeString(data); err == nil {
+						type lockedPayload struct {
+							Name    string   `json:"name"`
+							Domains []string `json:"domains"`
+							Key     string   `json:"key"`
+							Port    int      `json:"port"`
+						}
+						var p lockedPayload
+						if err := json.Unmarshal(decoded, &p); err == nil {
+							if len(p.Domains) > 0 {
+								cfg.Domains = p.Domains
+							}
+							if p.Key != "" {
+								cfg.ServerPublicKey = cleanString(p.Key)
+							}
+							if p.Port > 0 {
+								cfg.ListenPort = p.Port
+							}
+							logMsg("INFO", "Decoded protected configuration from soar://locked URL")
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Command line overrides
 	if *zonesFlag != "" {
 		cfg.Domains = parseStringArray(*zonesFlag)
 	} else if *zoneFlag != "" {
@@ -222,11 +275,11 @@ func main() {
 
 	// Validation
 	if len(cfg.Domains) == 0 {
-		logMsg("ERROR", "No tunnel domains configured. Specify via config file or -zones/-zone flag.")
+		logMsg("ERROR", "No tunnel domains configured. Specify via config file, -url, or -zones/-zone flag.")
 		os.Exit(1)
 	}
 	if cfg.ServerPublicKey == "" {
-		logMsg("ERROR", "No server public key configured. Specify via config file or -pubkey flag.")
+		logMsg("ERROR", "No server public key configured. Specify via config file, -url, or -pubkey flag.")
 		os.Exit(1)
 	}
 
@@ -236,11 +289,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 3. Load resolvers
+	// 4. Load resolvers
 	resolvers := loadResolvers(cfg.ResolversFile)
 	if len(resolvers) == 0 {
-		logMsg("WARN", "No resolvers loaded from %s; falling back to default resolvers (1.1.1.1:53, 8.8.8.8:53)", cfg.ResolversFile)
-		resolvers = []string{"1.1.1.1:53", "1.0.0.1:53", "8.8.8.8:53", "8.8.4.4:53", "9.9.9.9:53"}
+		logMsg("WARN", "No candidate resolvers found in %s; activating resilient crisis resolvers fallback", cfg.ResolversFile)
+		resolvers = []string{
+			"1.1.1.1:53",
+			"1.0.0.1:53",
+			"8.8.8.8:53",
+			"8.8.4.4:53",
+			"178.22.122.100:53",
+			"185.51.200.2:53",
+			"10.202.10.202:53",
+			"217.218.155.155:53",
+			"9.9.9.9:53",
+		}
 	}
 
 	level := slog.LevelInfo
@@ -283,14 +346,32 @@ func main() {
 
 	// Stats reporter
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+		var lastTx, lastRx uint64
+		var tickCount int
 		for range ticker.C {
 			active := activeStreams.Load()
 			tx := totalBytesTx.Load()
 			rx := totalBytesRx.Load()
 			total := totalStreams.Load()
-			if active > 0 || total > 0 {
+
+			var rateTx, rateRx float64
+			if tx >= lastTx {
+				rateTx = float64(tx-lastTx) / 2048.0 // KB/s
+			}
+			if rx >= lastRx {
+				rateRx = float64(rx-lastRx) / 2048.0 // KB/s
+			}
+			lastTx = tx
+			lastRx = rx
+
+			// Machine-readable telemetry for GUI & Android
+			fmt.Fprintf(os.Stderr, "[TELEMETRY] tx=%d rx=%d tx_rate=%.1f rx_rate=%.1f streams=%d\n",
+				tx, rx, rateTx, rateRx, active)
+
+			tickCount++
+			if tickCount%15 == 0 && (active > 0 || total > 0) {
 				logMsg("STATS", "Active: %d | Total Conns: %d | TX: %s | RX: %s",
 					active, total, formatBytes(tx), formatBytes(rx))
 			}
