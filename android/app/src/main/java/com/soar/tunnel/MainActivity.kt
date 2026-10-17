@@ -42,7 +42,9 @@ class MainActivity : AppCompatActivity() {
     // Ring-buffer for console logs to prevent UI thread lockups and memory bloat
     private val logLines = java.util.Collections.synchronizedList(mutableListOf<String>())
     private var isLogRenderPending = false
-    private const val MAX_LOG_LINES = 250
+    companion object {
+        private const val MAX_LOG_LINES = 250
+    }
     private var lastDetectedClipboard = ""
 
     private val importResolversFileLauncher = registerForActivityResult(

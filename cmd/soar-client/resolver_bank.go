@@ -207,4 +207,3 @@ func (b *ResolverBank) Clear() error {
 	b.Entries = make(map[string]*BankEntry)
 	return b.Save()
 }
-
