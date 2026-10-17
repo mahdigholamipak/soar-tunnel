@@ -294,6 +294,15 @@ elif [ "$BEHIND_COTTEN" = true ]; then
     echo -e "${GREEN}[OK] Binding Soar to loopback ${LISTEN_ADDR}.${NC}"
 fi
 
+# Auto-detect or configure outbound SOCKS5 proxy (e.g. Xray Cloudflare WARP)
+EGRESS_PROXY=""
+if echo "$*" | grep -q -- "--warp"; then
+    EGRESS_PROXY="127.0.0.1:1080"
+elif ss -ltn 2>/dev/null | grep -qE "[:.]1080[[:space:]]"; then
+    echo -e "${MAGENTA}[DETECT] Found local SOCKS5 proxy on 127.0.0.1:1080 (Cloudflare WARP / Xray)!${NC}"
+    EGRESS_PROXY="127.0.0.1:1080"
+fi
+
 # Save config info
 cat <<EOF > "$CONF_PATH"
 SERVER_IP="$SERVER_IP"
@@ -301,6 +310,7 @@ ZONES="$ZONES"
 PUB_KEY="$PUB_KEY"
 LISTEN_ADDR="$LISTEN_ADDR"
 BEHIND_COTTEN="$BEHIND_COTTEN"
+EGRESS_PROXY="$EGRESS_PROXY"
 EOF
 chmod 600 "$CONF_PATH"
 
@@ -314,6 +324,10 @@ fi
 
 # 9. Create Systemd Service
 SERVICE_FILE="/etc/systemd/system/soar.service"
+PROXY_ARG=""
+if [ -n "$EGRESS_PROXY" ]; then
+    PROXY_ARG="-proxy $EGRESS_PROXY"
+fi
 cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=Soar High-Performance DNS Tunnel Server (Lantern Protocol)
@@ -322,7 +336,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=$BIN_PATH -zones "$ZONES" -key-file "$KEY_PATH" -listen "$LISTEN_ADDR"
+ExecStart=$BIN_PATH -zones "$ZONES" -key-file "$KEY_PATH" -listen "$LISTEN_ADDR" -allow-ports any $PROXY_ARG
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -409,6 +423,11 @@ show_status() {
     echo -e "Listen Address:     ${GREEN}${LISTEN_ADDR:-:$LISTEN_PORT}${NC}"
     if [ "$BEHIND_COTTEN" = "true" ]; then
         echo -e "CottenRouter Mode:  ${MAGENTA}ACTIVE (Loopback ${LISTEN_ADDR:-127.0.0.1:5304})${NC}"
+    fi
+    if [ -n "$EGRESS_PROXY" ]; then
+        echo -e "Egress Proxy:       ${GREEN}ACTIVE ($EGRESS_PROXY - Cloudflare WARP)${NC}"
+    else
+        echo -e "Egress Proxy:       ${YELLOW}DIRECT (No Proxy)${NC}"
     fi
     echo -e "Systemd Service:    soar.service"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
@@ -503,6 +522,30 @@ update_server() {
     fi
 }
 
+toggle_warp() {
+    local target_state="$1"
+    local sfile="/etc/systemd/system/soar.service"
+    if [ "$target_state" = "on" ] || ([ -z "$target_state" ] && [ -z "$EGRESS_PROXY" ]); then
+        echo -e "${CYAN}Enabling Cloudflare WARP egress proxy (127.0.0.1:1080)...${NC}"
+        EGRESS_PROXY="127.0.0.1:1080"
+        sed -i '/EGRESS_PROXY/d' "$CONF_PATH"
+        echo 'EGRESS_PROXY="127.0.0.1:1080"' >> "$CONF_PATH"
+        sed -i 's| -proxy [^ ]*||g' "$sfile"
+        sed -i 's|ExecStart=\(.*\)|ExecStart=\1 -proxy 127.0.0.1:1080|' "$sfile"
+        systemctl daemon-reload
+        systemctl restart soar
+        echo -e "${GREEN}[OK] Cloudflare WARP egress proxy ENABLED!${NC}"
+    else
+        echo -e "${YELLOW}Disabling egress proxy (switching to DIRECT)...${NC}"
+        EGRESS_PROXY=""
+        sed -i '/EGRESS_PROXY/d' "$CONF_PATH"
+        sed -i 's| -proxy [^ ]*||g' "$sfile"
+        systemctl daemon-reload
+        systemctl restart soar
+        echo -e "${GREEN}[OK] Egress proxy DISABLED. Tunnel traffic routes directly from server.${NC}"
+    fi
+}
+
 case "$1" in
     status)
         show_status
@@ -534,6 +577,9 @@ case "$1" in
     qr)
         print_qr "$(build_standard_link)"
         ;;
+    warp|proxy)
+        toggle_warp "$2"
+        ;;
     update)
         update_server
         ;;
@@ -553,9 +599,10 @@ case "$1" in
         echo -e "7) Show Privacy-Protected Locked Link (Hidden Domain)"
         echo -e "8) Update Server to Latest GitHub Release"
         echo -e "9) Show CottenRouter Configuration Snippet"
+        echo -e "10) Toggle Cloudflare WARP Egress Proxy"
         echo -e "0) Exit"
         echo -e "${CYAN}=====================================================${NC}"
-        read -r -p "Select option [0-9]: " OPT
+        read -r -p "Select option [0-10]: " OPT
         case "$OPT" in
             1) show_status ;;
             2) journalctl -u soar -f ;;
@@ -566,6 +613,7 @@ case "$1" in
             7) show_locked_share ;;
             8) update_server ;;
             9) show_cotten ;;
+            10) toggle_warp ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
