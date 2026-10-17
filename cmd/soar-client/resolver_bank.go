@@ -185,16 +185,3 @@ func (b *ResolverBank) GetAllVerified() []string {
 	}
 	return result
 }
-
-// Load implements soar.ResolverCache interface.
-func (b *ResolverBank) Load() []string {
-	return b.GetTopHealthy(16, 48*time.Hour)
-}
-
-// Store implements soar.ResolverCache interface.
-func (b *ResolverBank) Store(resolvers []string) {
-	for _, r := range resolvers {
-		b.RecordSuccess(r, 80*time.Millisecond)
-	}
-	_ = b.Save()
-}
