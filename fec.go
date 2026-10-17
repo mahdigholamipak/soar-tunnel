@@ -159,16 +159,20 @@ type fecDecoderGroup struct {
 
 // FECDecoder receives packets and parity frames, instantly reconstructing any single missing packet.
 type FECDecoder struct {
-	mu     sync.Mutex
-	groups map[uint64]*fecDecoderGroup
-	seenPN map[uint64]uint64 // pn -> groupID
+	mu         sync.Mutex
+	groups     map[uint64]*fecDecoderGroup
+	seenPN     map[uint64]uint64
+	recentPkts map[uint64][]byte
+	order      []uint64
 }
 
 // NewFECDecoder creates a new FEC decoder.
 func NewFECDecoder() *FECDecoder {
 	return &FECDecoder{
-		groups: make(map[uint64]*fecDecoderGroup),
-		seenPN: make(map[uint64]uint64),
+		groups:     make(map[uint64]*fecDecoderGroup),
+		seenPN:     make(map[uint64]uint64),
+		recentPkts: make(map[uint64][]byte),
+		order:      make([]uint64, 0, 128),
 	}
 }
 
@@ -176,6 +180,19 @@ func NewFECDecoder() *FECDecoder {
 func (d *FECDecoder) RecordPacket(pn uint64, payload []byte) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	cp := make([]byte, len(payload))
+	copy(cp, payload)
+
+	if _, exists := d.recentPkts[pn]; !exists {
+		d.recentPkts[pn] = cp
+		d.order = append(d.order, pn)
+		if len(d.order) > 128 {
+			old := d.order[0]
+			d.order = d.order[1:]
+			delete(d.recentPkts, old)
+		}
+	}
 
 	gid, ok := d.seenPN[pn]
 	if !ok {
@@ -185,13 +202,9 @@ func (d *FECDecoder) RecordPacket(pn uint64, payload []byte) {
 	if g == nil {
 		return
 	}
-	if _, exists := g.packets[pn]; !exists {
-		cp := make([]byte, len(payload))
-		copy(cp, payload)
-		g.packets[pn] = cp
-		if len(g.packets) == g.k {
-			delete(d.groups, gid)
-		}
+	g.packets[pn] = cp
+	if len(g.packets) == g.k {
+		delete(d.groups, gid)
 	}
 }
 
@@ -212,6 +225,9 @@ func (d *FECDecoder) HandleFECFrame(f *fecFrame) (uint64, []byte, bool) {
 		d.groups[f.GroupID] = g
 		for _, pn := range f.PNs {
 			d.seenPN[pn] = f.GroupID
+			if pkt, ok := d.recentPkts[pn]; ok {
+				g.packets[pn] = pkt
+			}
 		}
 	} else {
 		g.parity = append([]byte(nil), f.Parity...)
@@ -243,6 +259,7 @@ func (d *FECDecoder) HandleFECFrame(f *fecFrame) (uint64, []byte, bool) {
 	if missingCount == 1 {
 		recovered := ReconstructMissing(g.parity, known)
 		g.packets[missingPN] = recovered
+		d.recentPkts[missingPN] = recovered
 		delete(d.groups, f.GroupID)
 		return missingPN, recovered, true
 	} else if missingCount == 0 {
