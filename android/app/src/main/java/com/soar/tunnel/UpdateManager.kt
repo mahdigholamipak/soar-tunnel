@@ -17,9 +17,18 @@ import java.net.URL
 
 object UpdateManager {
     private const val GITHUB_REPO = "mahdigholamipak/soar-tunnel"
-    private const val CURRENT_VERSION = "1.0.2"
+
+    private fun getAppVersion(activity: Activity): String {
+        return try {
+            val pInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
+            pInfo.versionName ?: "1.0.3"
+        } catch (e: Exception) {
+            "1.0.3"
+        }
+    }
 
     fun checkForUpdates(activity: Activity, silent: Boolean = false) {
+        val currentVersion = getAppVersion(activity)
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val url = URL("https://api.github.com/repos/$GITHUB_REPO/releases/latest")
@@ -57,13 +66,13 @@ object UpdateManager {
                     }
                 }
 
-                val hasUpdate = isNewerVersion(remoteVer, CURRENT_VERSION)
+                val hasUpdate = isNewerVersion(remoteVer, currentVersion)
 
                 withContext(Dispatchers.Main) {
                     if (hasUpdate && apkDownloadUrl.isNotBlank()) {
                         showUpdateDialog(activity, tagName, body, apkDownloadUrl)
                     } else if (!silent) {
-                        Toast.makeText(activity, "You have the latest version (v$CURRENT_VERSION)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activity, "You have the latest version (v$currentVersion)", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {

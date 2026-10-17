@@ -115,36 +115,94 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 	startIdx := m.activeIdx
 	m.mu.RUnlock()
 
-	var lastErr error
+	if count == 1 {
+		entry := m.clients[0]
+		dialCtx, cancel := context.WithTimeout(ctx, m.dialTimeout)
+		defer cancel()
+		conn, err := entry.client.DialContext(dialCtx, network, addr)
+		if err != nil {
+			return nil, "", err
+		}
+		return conn, entry.zone, nil
+	}
+
+	// Concurrent Happy Eyeballs dial across available domains (350ms stagger)
+	type dialResult struct {
+		conn net.Conn
+		zone string
+		idx  int
+		err  error
+	}
+
+	resCh := make(chan dialResult, count)
+	dialCtx, cancelAll := context.WithCancel(ctx)
+	defer cancelAll()
+
+	var started int
 	for i := 0; i < count; i++ {
 		idx := (startIdx + i) % count
 		entry := m.clients[idx]
 
-		// Skip temporarily if recent consecutive failures and more domains are available
 		if count > 1 && entry.failures.Load() >= 3 && time.Since(entry.lastFail) < 30*time.Second {
 			continue
 		}
 
-		dialCtx, cancel := context.WithTimeout(ctx, m.dialTimeout)
-		conn, err := entry.client.DialContext(dialCtx, network, addr)
-		cancel()
+		started++
+		go func(targetIdx int, e *clientEntry) {
+			childCtx, cancelChild := context.WithTimeout(dialCtx, m.dialTimeout)
+			defer cancelChild()
 
-		if err == nil {
-			entry.failures.Store(0)
-			if idx != startIdx {
-				m.mu.Lock()
-				m.activeIdx = idx
-				m.mu.Unlock()
-				logMsg("INFO", "Failover: switched active domain to %s", entry.zone)
+			conn, err := e.client.DialContext(childCtx, network, addr)
+			if err != nil {
+				e.failures.Add(1)
+				e.lastFail = time.Now()
+				resCh <- dialResult{err: err, zone: e.zone, idx: targetIdx}
+				return
 			}
-			return conn, entry.zone, nil
-		}
 
-		lastErr = err
-		entry.failures.Add(1)
-		entry.lastFail = time.Now()
-		if count > 1 {
-			logMsg("WARN", "Domain %s dial error (%v), trying fallback...", entry.zone, err)
+			e.failures.Store(0)
+			resCh <- dialResult{conn: conn, zone: e.zone, idx: targetIdx}
+		}(idx, entry)
+
+		// Wait up to 350ms before launching the next domain fallback
+		timer := time.NewTimer(350 * time.Millisecond)
+		select {
+		case r := <-resCh:
+			timer.Stop()
+			if r.conn != nil {
+				if r.idx != startIdx {
+					m.mu.Lock()
+					m.activeIdx = r.idx
+					m.mu.Unlock()
+					logMsg("INFO", "Fastest domain: selected %s", r.zone)
+				}
+				return r.conn, r.zone, nil
+			}
+		case <-timer.C:
+			// 350ms passed without response; launch next candidate domain in parallel
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, "", ctx.Err()
+		}
+	}
+
+	// Collect results from remaining running attempts
+	var lastErr error
+	for i := 0; i < started-1; i++ {
+		select {
+		case r := <-resCh:
+			if r.conn != nil {
+				if r.idx != startIdx {
+					m.mu.Lock()
+					m.activeIdx = r.idx
+					m.mu.Unlock()
+					logMsg("INFO", "Fastest domain: selected %s", r.zone)
+				}
+				return r.conn, r.zone, nil
+			}
+			lastErr = r.err
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
 		}
 	}
 
@@ -318,9 +376,9 @@ func main() {
 	logMsg("INFO", "Initializing Soar DNS Tunnel...")
 	logMsg("INFO", "Configured domains (%d): %s", len(cfg.Domains), strings.Join(cfg.Domains, ", "))
 	logMsg("INFO", "Loaded resolvers: %d candidate IPs", len(resolvers))
-	if len(resolvers) > 16 {
-		logMsg("INFO", "Running pre-flight latency ranking to select top responsive resolvers...")
-		resolvers = selectBestResolvers(resolvers, 16)
+	if len(resolvers) > 6 {
+		logMsg("INFO", "Discovered %d candidate resolvers; running fast latency ranking to select top 6...", len(resolvers))
+		resolvers = selectBestResolvers(resolvers, 6)
 		logMsg("INFO", "Selected top %d responsive resolvers: %s", len(resolvers), strings.Join(resolvers, ", "))
 	}
 
@@ -466,13 +524,13 @@ func selectBestResolvers(candidates []string, maxKeep int) []string {
 	for _, addr := range candidates {
 		go func(a string) {
 			start := time.Now()
-			conn, err := net.DialTimeout("udp", a, 700*time.Millisecond)
+			conn, err := net.DialTimeout("udp", a, 350*time.Millisecond)
 			if err != nil {
 				ch <- resPing{addr: a, rtt: time.Hour}
 				return
 			}
 			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(700 * time.Millisecond))
+			conn.SetDeadline(time.Now().Add(350 * time.Millisecond))
 			if _, err := conn.Write(dnsQuery); err != nil {
 				ch <- resPing{addr: a, rtt: time.Hour}
 				return
@@ -506,16 +564,11 @@ func selectBestResolvers(candidates []string, maxKeep int) []string {
 		}
 	}
 
-	if len(best) < maxKeep {
-		for _, a := range candidates {
-			if !slices.Contains(best, a) {
-				best = append(best, a)
-				if len(best) >= maxKeep {
-					break
-				}
-			}
-		}
+	// If no candidate answered the quick probe (e.g. strict probe filtering), fallback to first few
+	if len(best) == 0 {
+		return candidates[:min(len(candidates), maxKeep)]
 	}
+
 	return best
 }
 
