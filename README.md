@@ -174,17 +174,17 @@ curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scr
 
 If you use [CottenRouter](https://github.com/TaJirax/CottenRouter) as a DNS reverse proxy on port 53 to host multiple DNS tunneling services concurrently:
 
-1. **Native Co-existence Mode:**
-   The installer automatically detects CottenRouter and binds Soar strictly to loopback `127.0.0.1:5303` without adding iptables port 53 redirects:
+1. **Dynamic Port Discovery (Zero Conflict with StormDNS & Others):**
+   The installer automatically detects CottenRouter, reserves well-known ports (5301 CottenDNS, 5302 SlipGate, 5303 StormDNS), and dynamically binds Soar to the first available `53xx` port (e.g. `127.0.0.1:5304`) without adding iptables port 53 redirects:
    ```bash
    curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scripts/install.sh | bash -s -- --cotten
    ```
 2. **Add Route to CottenRouter:**
-   Add this rule to `/etc/cottenrouter/config.json` (or via `cottenrouter tui`):
+   The installer and `soar cotten` output the exact configuration rule matching the dynamically allocated port. Add it to `/etc/cottenrouter/config.json` (or via `cottenrouter tui`):
    ```json
    {
      "suffix": "s.example.com",
-     "address": "127.0.0.1:5303"
+     "address": "127.0.0.1:5304"
    }
    ```
    Then reload CottenRouter: `systemctl restart cottenrouter`.

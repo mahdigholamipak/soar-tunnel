@@ -44,6 +44,55 @@ detect_arch() {
 }
 
 # ------------------------------------------------------------------------------
+# Helper: Find First Available 53xx Port (avoiding StormDNS/CottenDNS/SlipGate)
+# ------------------------------------------------------------------------------
+find_free_53xx_port() {
+    local is_cotten="${1:-false}"
+    local cotten_conf="/etc/cottenrouter/config.json"
+    local candidate=""
+    
+    # Scan ports 5301-5399
+    # In CottenRouter environments, standard assignments are:
+    # 5301 = CottenDNS
+    # 5302 = SlipGate
+    # 5303 = StormDNS
+    for port in $(seq 5301 5399); do
+        # 1. Proactively avoid well-known standard ports (5301-5303) in CottenRouter environments
+        if [ "$is_cotten" = "true" ] && [ "$port" -ge 5301 ] && [ "$port" -le 5303 ]; then
+            continue
+        fi
+
+        # 2. Check if port is in active listening state (UDP or TCP)
+        if ss -lun -ltn 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"; then
+            continue
+        fi
+        
+        # 3. Check if port is already configured inside CottenRouter config file
+        if [ -f "$cotten_conf" ] && grep -qE ":${port}[^0-9]" "$cotten_conf" 2>/dev/null; then
+            continue
+        fi
+        if [ -d "/etc/cottenrouter" ] && grep -rqE ":${port}[^0-9]" /etc/cottenrouter/ 2>/dev/null; then
+            continue
+        fi
+
+        candidate="$port"
+        break
+    done
+    
+    # Fallback to any free port in 5301-5399 if standard candidate wasn't set
+    if [ -z "$candidate" ]; then
+        for port in $(seq 5301 5399); do
+            if ! ss -lun -ltn 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"; then
+                candidate="$port"
+                break
+            fi
+        done
+    fi
+
+    echo "${candidate:-5353}"
+}
+
+# ------------------------------------------------------------------------------
 # Helper: One-Line Auto Update
 # ------------------------------------------------------------------------------
 do_update() {
@@ -199,33 +248,50 @@ if ss -lupn | grep -q ":53 "; then
     
     if [ "$BEHIND_COTTEN" = true ] || echo "$CONFLICT_PROC" | grep -qi "cottenrouter"; then
         BEHIND_COTTEN=true
-        echo -e "${GREEN}[INFO] CottenRouter co-existence active: binding Soar to 127.0.0.1:5303.${NC}"
-        echo -e "${GREEN}[INFO] Preserving port 53 exclusively for CottenRouter (no iptables redirect).${NC}"
-        LISTEN_PORT=5303
-        LISTEN_ADDR="127.0.0.1:5303"
-        # Clean up any previous conflicting iptables redirect
-        iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
     else
         echo -e "${YELLOW}Is port 53 used by CottenRouter or another DNS reverse proxy?${NC}"
-        read -r -p "Run in reverse-proxy co-existence mode (127.0.0.1:5303 without iptables hijacking)? [y/N]: " PROXY_CHOICE
+        read -r -p "Run in reverse-proxy co-existence mode (loopback without iptables hijacking)? [y/N]: " PROXY_CHOICE
         if [[ "$PROXY_CHOICE" =~ ^[Yy]$ ]]; then
             BEHIND_COTTEN=true
-            LISTEN_PORT=5303
-            LISTEN_ADDR="127.0.0.1:5303"
-            echo -e "${GREEN}[OK] Configured for DNS reverse proxy co-existence (127.0.0.1:5303).${NC}"
-            iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
-        else
-            echo -e "${BLUE}[INFO] Configuring Soar on port 5303 with iptables UDP:53 redirection...${NC}"
-            LISTEN_PORT=5303
-            LISTEN_ADDR=":5303"
-            iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303 2>/dev/null || true
-            iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5303
         fi
     fi
+
+    if [ "$BEHIND_COTTEN" = true ]; then
+        DETECTED_PORT=$(find_free_53xx_port "true")
+        echo -e "${GREEN}[INFO] CottenRouter co-existence active!${NC}"
+        echo -e "${BLUE}[INFO] Scanning for first available 53xx port (avoiding 5301 CottenDNS, 5302 SlipGate, 5303 StormDNS)...${NC}"
+        echo -e "${GREEN}[OK] Dynamically selected free port: ${DETECTED_PORT}${NC}"
+        if [ -t 0 ]; then
+            read -r -p "Press Enter to use port $DETECTED_PORT, or enter custom port [$DETECTED_PORT]: " CUSTOM_PORT
+            LISTEN_PORT="${CUSTOM_PORT:-$DETECTED_PORT}"
+        else
+            LISTEN_PORT="$DETECTED_PORT"
+        fi
+        LISTEN_ADDR="127.0.0.1:$LISTEN_PORT"
+        echo -e "${GREEN}[INFO] Binding Soar to loopback ${LISTEN_ADDR} (preserving port 53 for CottenRouter).${NC}"
+        # Clean up any previous conflicting iptables redirect
+        iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT" 2>/dev/null || true
+    else
+        DETECTED_PORT=$(find_free_53xx_port "false")
+        echo -e "${BLUE}[INFO] Dynamically selecting free 53xx port for iptables UDP:53 redirection: ${DETECTED_PORT}${NC}"
+        LISTEN_PORT="$DETECTED_PORT"
+        LISTEN_ADDR=":$LISTEN_PORT"
+        iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT" 2>/dev/null || true
+        iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT"
+    fi
 elif [ "$BEHIND_COTTEN" = true ]; then
-    LISTEN_PORT=5303
-    LISTEN_ADDR="127.0.0.1:5303"
-    echo -e "${GREEN}[OK] CottenRouter mode specified: binding to 127.0.0.1:5303.${NC}"
+    DETECTED_PORT=$(find_free_53xx_port "true")
+    echo -e "${GREEN}[OK] CottenRouter mode specified.${NC}"
+    echo -e "${BLUE}[INFO] Scanning for first available 53xx port (avoiding 5301 CottenDNS, 5302 SlipGate, 5303 StormDNS)...${NC}"
+    echo -e "${GREEN}[OK] Dynamically selected free port: ${DETECTED_PORT}${NC}"
+    if [ -t 0 ]; then
+        read -r -p "Press Enter to use port $DETECTED_PORT, or enter custom port [$DETECTED_PORT]: " CUSTOM_PORT
+        LISTEN_PORT="${CUSTOM_PORT:-$DETECTED_PORT}"
+    else
+        LISTEN_PORT="$DETECTED_PORT"
+    fi
+    LISTEN_ADDR="127.0.0.1:$LISTEN_PORT"
+    echo -e "${GREEN}[OK] Binding Soar to loopback ${LISTEN_ADDR}.${NC}"
 fi
 
 # Save config info
@@ -241,7 +307,9 @@ chmod 600 "$CONF_PATH"
 # Open firewall if ufw is active
 if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
     ufw allow 53/udp >/dev/null 2>&1 || true
-    ufw allow 5303/udp >/dev/null 2>&1 || true
+    if [ "$BEHIND_COTTEN" != "true" ] && [ "$LISTEN_PORT" != "53" ]; then
+        ufw allow "${LISTEN_PORT}/udp" >/dev/null 2>&1 || true
+    fi
 fi
 
 # 9. Create Systemd Service
@@ -340,13 +408,14 @@ show_status() {
     echo -e "Public Key:         ${GREEN}${PUB_KEY:-Unknown}${NC}"
     echo -e "Listen Address:     ${GREEN}${LISTEN_ADDR:-:$LISTEN_PORT}${NC}"
     if [ "$BEHIND_COTTEN" = "true" ]; then
-        echo -e "CottenRouter Mode:  ${MAGENTA}ACTIVE (Loopback 127.0.0.1:5303)${NC}"
+        echo -e "CottenRouter Mode:  ${MAGENTA}ACTIVE (Loopback ${LISTEN_ADDR:-127.0.0.1:5304})${NC}"
     fi
     echo -e "Systemd Service:    soar.service"
     echo -e "${CYAN}-----------------------------------------------------${NC}"
 }
 
 show_cotten() {
+    local target_addr="${LISTEN_ADDR:-127.0.0.1:5304}"
     echo -e "${CYAN}=====================================================${NC}"
     echo -e "${MAGENTA}       CottenRouter Configuration Snippet            ${NC}"
     echo -e "${CYAN}=====================================================${NC}"
@@ -356,7 +425,7 @@ show_cotten() {
     for zone in $(echo "$ZONES" | tr ',' ' '); do
         echo -e "  {"
         echo -e "    \"suffix\": \"${zone}\","
-        echo -e "    \"address\": \"127.0.0.1:5303\""
+        echo -e "    \"address\": \"${target_addr}\""
         echo -e "  },"
     done
     echo ""
@@ -521,7 +590,7 @@ echo -e "   - Tunnel Zones:    ${GREEN}$ZONES${NC}"
 echo -e "   - Server PubKey:   ${GREEN}$PUB_KEY${NC}"
 echo -e "   - Listen Address:  ${GREEN}$LISTEN_ADDR${NC}"
 if [ "$BEHIND_COTTEN" = true ]; then
-    echo -e "   - Routing Mode:    ${MAGENTA}CottenRouter Co-existence (127.0.0.1:5303)${NC}"
+    echo -e "   - Routing Mode:    ${MAGENTA}CottenRouter Co-existence (${LISTEN_ADDR})${NC}"
     echo ""
     echo -e "${MAGENTA}>>> CottenRouter Setup Action Required <<<${NC}"
     echo -e "Add the following rule to ${YELLOW}/etc/cottenrouter/config.json${NC} (or via ${YELLOW}cottenrouter tui${NC}):"
@@ -529,7 +598,7 @@ if [ "$BEHIND_COTTEN" = true ]; then
     for zone in $(echo "$ZONES" | tr ',' ' '); do
         echo -e "  {"
         echo -e "    \"suffix\": \"${zone}\","
-        echo -e "    \"address\": \"127.0.0.1:5303\""
+        echo -e "    \"address\": \"${LISTEN_ADDR}\""
         echo -e "  },"
     done
     echo ""

@@ -175,19 +175,19 @@ curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scr
 
 ### 🔀 همزیستی با CottenRouter (اجرای همزمان چند تونل DNS روی سرور)
 
-اگر روی سرور خود از **CottenRouter** به عنوان پروکسی معکوس پورت ۵۳ استفاده می‌کنید تا چندین سرویس مختلف (مانند CottenDNS، SlipGate و Soar) را همزمان داشته باشید:
+اگر روی سرور خود از **CottenRouter** به عنوان پروکسی معکوس پورت ۵۳ استفاده می‌کنید تا چندین سرویس مختلف (مانند CottenDNS، SlipGate، StormDNS و Soar) را همزمان داشته باشید:
 
-1. **نصب مستقیم و هماهنگ:**
-   اسکریپت نصب به صورت خودکار وجود CottenRouter را تشخیص داده و سرور Soar را روی آدرس محلی `127.0.0.1:5303` بدون دستکاری ریدایرکت‌های iptables تنظیم می‌کند:
+1. **انتخاب پویا و هوشمند پورت (عدم تداخل با StormDNS و سایرین):**
+   اسکریپت نصب به صورت خودکار وجود CottenRouter را تشخیص داده و پورت‌های رزروشده‌ی مرسوم (مانند ۵۳۰۱ برای CottenDNS، ۵۳۰۲ برای SlipGate و ۵۳۰۳ برای StormDNS) را محافظت می‌کند و اولین پورت آزاد در رنج `53xx` (مثلاً `5304` یا بعدی) را روی لوپ‌بک `127.0.0.1` انتخاب می‌کند:
    ```bash
    curl -sSL https://raw.githubusercontent.com/mahdigholamipak/soar-tunnel/main/scripts/install.sh | bash -s -- --cotten
    ```
 2. **ثبت قانون در CottenRouter:**
-   قانون زیر را در فایل `/etc/cottenrouter/config.json` (یا از طریق منوی `cottenrouter tui`) قرار دهید:
+   پس از اتمام نصب، قطعه کد JSON دقیقاً با همان پورت انتخاب‌شده نمایش داده می‌شود تا در فایل `/etc/cottenrouter/config.json` (یا از طریق `cottenrouter tui` یا دستور `soar cotten`) قرار دهید:
    ```json
    {
      "suffix": "s.example.com",
-     "address": "127.0.0.1:5303"
+     "address": "127.0.0.1:5304"
    }
    ```
    و سپس کاتن‌روتر را راه‌اندازی مجدد کنید:
