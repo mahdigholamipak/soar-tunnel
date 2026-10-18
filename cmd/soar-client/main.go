@@ -104,6 +104,7 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 		return nil, errors.New("at least one tunnel domain/zone is required")
 	}
 
+	tuner := soar.NewAdaptiveTuner()
 	var entries []*clientEntry
 	for _, z := range zones {
 		z = strings.TrimSpace(z)
@@ -120,9 +121,11 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 				Candidates: resolvers,
 			},
 			MaxInflight:   512,
-			MaxPathWindow: 48,
+			MaxPathWindow: 64,
 			StreamWindow:  1024 << 10,
-			SendBuffer:    256 << 10,
+			SendBuffer:    512 << 10,
+			Hold:          800 * time.Millisecond,
+			Tuner:         tuner,
 			Logger:        logger,
 		}
 		c, err := soar.NewClient(cfg)
@@ -145,7 +148,7 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 		activeIdx:   0,
 		dialTimeout: dialTimeout,
 		logger:      logger,
-		tuner:       soar.NewAdaptiveTuner(),
+		tuner:       tuner,
 	}, nil
 }
 

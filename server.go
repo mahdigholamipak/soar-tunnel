@@ -76,7 +76,7 @@ func (c *ServerConfig) setDefaults() {
 		c.MaxTotalStreams = 16384
 	}
 	if c.MaxHold <= 0 {
-		c.MaxHold = 1500 * time.Millisecond
+		c.MaxHold = 2000 * time.Millisecond
 	}
 	if c.LossTimeout <= 0 {
 		c.LossTimeout = 3 * time.Second
@@ -84,12 +84,12 @@ func (c *ServerConfig) setDefaults() {
 	if c.IdleTimeout <= 0 {
 		c.IdleTimeout = 2 * time.Minute
 	}
-	// Uploads are small; a modest receive window bounds what one session can make us buffer.
+	// High-throughput buffers for multi-megabit/s streaming
 	if c.StreamWindow == 0 {
-		c.StreamWindow = 64 << 10
+		c.StreamWindow = 1024 << 10
 	}
 	if c.SendBuffer <= 0 {
-		c.SendBuffer = 256 << 10
+		c.SendBuffer = 1024 << 10
 	}
 	if c.MaxStreams <= 0 {
 		c.MaxStreams = 128
@@ -186,7 +186,15 @@ func Serve(ctx context.Context, pc net.PacketConn, cfg ServerConfig) error {
 	s := &Server{cfg: cfg, zones: parsedZones, pc: pc, ctx: ctx, signTokens: tokenBucket{rate: 200, tokens: 200, last: time.Now()},
 		helloQ:   make(chan helloJob, 256),
 		rrl:      make(map[netip.Prefix]*byteBucket),
-		sessions: make(map[uint16]*srvSession), hellos: make(map[[pubLen]byte]*helloEntry)}
+		sessions: make(map[uint16]*srvSession),
+		hellos:   make(map[[pubLen]byte]*helloEntry),
+	}
+	if u, ok := pc.(interface{ SetReadBuffer(int) error }); ok {
+		_ = u.SetReadBuffer(8 << 20)
+	}
+	if u, ok := pc.(interface{ SetWriteBuffer(int) error }); ok {
+		_ = u.SetWriteBuffer(8 << 20)
+	}
 	go func() {
 		<-ctx.Done()
 		pc.Close()
@@ -498,7 +506,7 @@ func (ss *srvSession) onQuery(q *query, addr net.Addr, p []byte) {
 		ss.held = append(ss.held, hq)
 		hq.timer = time.AfterFunc(hold, func() { ss.expire(hq) })
 		// Bound held queries per session; answer the oldest.
-		for len(ss.held) > 128 {
+		for len(ss.held) > 256 {
 			out = append(out, ss.answerLocked(ss.held[0], now))
 		}
 	}

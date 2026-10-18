@@ -67,7 +67,7 @@ func newStream(s *session, id uint64) *stream {
 }
 
 // initialWindow is every stream's flow-control limit until the receiver advertises its own.
-const initialWindow = 32 << 10
+const initialWindow = 256 << 10
 
 // advertise sends the receive window if it's larger than the initial one. Caller holds s.mu.
 func (st *stream) advertise() {
@@ -288,10 +288,10 @@ func (c *Conn) Read(p []byte) (int, error) {
 				st.rbuf = nil
 			}
 			st.rread += uint64(n)
-			// Re-advertise once half the window has been consumed. Limits only ever grow: the
+			// Re-advertise once a quarter of the window has been consumed to prevent throughput stalls. Limits only ever grow: the
 			// peer keeps whatever it was granted before.
 			grant := false
-			if limit := st.rread + st.rwin; limit > st.rmax && limit-st.rmax >= st.rwin/2 && !st.rfin {
+			if limit := st.rread + st.rwin; limit > st.rmax && limit-st.rmax >= st.rwin/4 && !st.rfin {
 				st.rmax = limit
 				s.queueCtrl(ctrl{typ: frMaxStream, id: st.id, val: limit})
 				grant = true

@@ -128,7 +128,16 @@ func main() {
 		log.Info("serving", "listen", pc.LocalAddr(), "zones", len(allZones))
 	}
 
-	if err := soar.Serve(ctx, pc, soar.ServerConfig{Zones: allZones, Zone: *zone, PrivateKey: priv, Dial: dial, Logger: log}); err != nil {
+	if err := soar.Serve(ctx, pc, soar.ServerConfig{
+		Zones:        allZones,
+		Zone:         *zone,
+		PrivateKey:   priv,
+		Dial:         dial,
+		Logger:       log,
+		StreamWindow: 1024 << 10,
+		SendBuffer:   1024 << 10,
+		MaxHold:      2000 * time.Millisecond,
+	}); err != nil {
 		fatal(err)
 	}
 }

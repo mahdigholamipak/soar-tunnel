@@ -159,6 +159,24 @@ func (t *AdaptiveTuner) Mode() NetworkProfileMode {
 	return t.cachedMode
 }
 
+// DownstreamPipelineMultiplier returns dynamic scaling for proactive query pipelining.
+func (t *AdaptiveTuner) DownstreamPipelineMultiplier() float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	switch t.cachedMode {
+	case ModeUltraFast:
+		return 1.5
+	case ModeBalanced:
+		return 1.25
+	case ModeResilient:
+		return 0.85
+	case ModeCrisis:
+		return 0.5
+	default:
+		return 1.0
+	}
+}
+
 // Snapshot returns a copy of the current tuning telemetry.
 func (t *AdaptiveTuner) Snapshot() TunerSnapshot {
 	t.mu.RLock()

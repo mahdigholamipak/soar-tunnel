@@ -62,6 +62,7 @@ type Config struct {
 	// client points them past its own tunnel, a test harness through a proxy. Defaults: net.
 	ListenPacket func(ctx context.Context, network, address string) (net.PacketConn, error)
 	DialTCP      func(ctx context.Context, network, address string) (net.Conn, error)
+	Tuner        *AdaptiveTuner
 	Logger       *slog.Logger
 }
 
@@ -83,20 +84,20 @@ func (c *Config) setDefaults() {
 	c.MaxQName = min(c.MaxQName, maxName)
 	c.SafeQName = min(c.SafeQName, c.MaxQName)
 	if c.Hold <= 0 {
-		c.Hold = 500 * time.Millisecond
+		c.Hold = 800 * time.Millisecond
 	}
 	if c.MaxInflight <= 0 {
-		c.MaxInflight = 128
+		c.MaxInflight = 512
 	}
 	c.MaxInflight = min(c.MaxInflight, maxInflightCap)
 	if c.MaxPathWindow <= 0 {
-		c.MaxPathWindow = 32
+		c.MaxPathWindow = 64
 	}
 	if c.StreamWindow == 0 {
-		c.StreamWindow = 256 << 10
+		c.StreamWindow = 1024 << 10
 	}
 	if c.SendBuffer <= 0 {
-		c.SendBuffer = 64 << 10
+		c.SendBuffer = 512 << 10
 	}
 	if c.MaxStreams <= 0 {
 		c.MaxStreams = 64
@@ -301,6 +302,12 @@ func NewClient(cfg Config) (*Client, error) {
 	pc, err := cfg.ListenPacket(context.Background(), "udp", ":0")
 	if err != nil {
 		return nil, err
+	}
+	if u, ok := pc.(interface{ SetReadBuffer(int) error }); ok {
+		_ = u.SetReadBuffer(4 << 20)
+	}
+	if u, ok := pc.(interface{ SetWriteBuffer(int) error }); ok {
+		_ = u.SetWriteBuffer(4 << 20)
 	}
 	c := &Client{cfg: cfg, z: z, pc: pc, pending: make(map[uint16]*pendingQuery),
 		wakeCh: make(chan struct{}, 1), done: make(chan struct{})}
@@ -938,17 +945,26 @@ func (c *Client) failLocked(q *pendingQuery, now time.Time, refused bool) {
 }
 
 // wantQueries is how many queries the session wants outstanding with nothing else to send.
-func (cs *clientSession) wantQueries() int {
+func (cs *clientSession) wantQueries(c *Client) int {
 	if len(cs.streams) == 0 {
 		if len(cs.toAck) > 0 || cs.dataInFlight() {
 			return 1
 		}
 		return 0
 	}
-	// Proactive pipelining floor: keep at least 6 queries in flight across resolvers when
-	// active streams exist, so the server always has held query slots ready to immediately
-	// push incoming downstream data without waiting for a round-trip poll.
-	return max(6, 2+cs.backlog)
+	// High-throughput proactive downstream pipelining for multi-megabit/s streaming:
+	// Maintain a saturated pipeline across all healthy, verified paths so the server
+	// always has held query slots ready to immediately transmit incoming data with 0ms delay.
+	numPaths := len(c.paths)
+	base := max(48, min(144, numPaths*2))
+	if c.cfg.Tuner != nil {
+		base = int(float64(base) * c.cfg.Tuner.DownstreamPipelineMultiplier())
+	}
+	target := max(base, base/2+cs.backlog)
+	if c.cfg.MaxInflight > 0 {
+		target = min(target, c.cfg.MaxInflight*3/4)
+	}
+	return target
 }
 
 func (c *Client) fillLocked(now time.Time) {
@@ -992,7 +1008,7 @@ func (c *Client) fillLocked(now time.Time) {
 			return
 		}
 		cs.mu.Lock()
-		need := cs.hasData() || polls < cs.wantQueries()
+		need := cs.hasData() || polls < cs.wantQueries(c)
 		cs.mu.Unlock()
 		if !need {
 			return
