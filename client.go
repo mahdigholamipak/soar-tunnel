@@ -377,9 +377,12 @@ func (c *Client) ResolverCount() int {
 }
 
 func (c *Client) newPath(ua *net.UDPAddr, tcp bool) *path {
-	p := &path{addr: ua, cwnd: 4, ssthresh: float64(c.cfg.MaxPathWindow), created: time.Now(),
-		nameLen: c.cfg.SafeQName, sizeCeil: c.cfg.maxLimitClass() + 1, maxClass: c.cfg.maxLimitClass(), qtype: typeTXT,
-		ednsSize: 1232}
+	maxCls := c.cfg.maxLimitClass()
+	p := &path{
+		addr: ua, cwnd: 4, ssthresh: float64(c.cfg.MaxPathWindow), created: time.Now(),
+		nameLen: c.cfg.SafeQName, sizeCeil: maxCls + 1, maxClass: maxCls, qtype: typeTXT,
+		ednsSize: 1232, sizeOK: maxCls,
+	}
 	if tcp {
 		p.tcp = c.startTCP(ua.String())
 	}
@@ -393,6 +396,11 @@ func (c *Client) SetPathEDNS(addr string, ednsSize uint16) {
 	for _, p := range c.paths {
 		if p.addr.String() == addr {
 			p.ednsSize = ednsSize
+			if ednsSize >= 1232 {
+				p.sizeOK = p.maxClass
+			} else {
+				p.sizeOK = min(max(int(ednsSize-512)/48, 0), p.maxClass)
+			}
 		}
 	}
 }
@@ -733,7 +741,7 @@ func (p *path) nextClass() int {
 			return p.test
 		}
 		return p.sizeOK
-	case p.sizeOK > 0 && p.alt%4 == 0:
+	case p.sizeOK > 0 && p.alt%32 == 0:
 		return 0
 	}
 	return p.sizeOK
