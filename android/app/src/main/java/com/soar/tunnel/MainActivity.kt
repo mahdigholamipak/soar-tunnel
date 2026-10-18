@@ -64,6 +64,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        val appVer = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.4.2"
+        } catch (_: Exception) {
+            "1.4.2"
+        }
+        binding.tvVersionTag.text = "v$appVer"
+
         setupResolversView()
         loadProfiles()
         setupTabs()
@@ -746,10 +753,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAboutDialog() {
+        val appVer = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.4.2"
+        } catch (_: Exception) {
+            "1.4.2"
+        }
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.4.1\n\n" +
+                "SOAR DNS TUNNEL v$appVer\n\n" +
                 "Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
