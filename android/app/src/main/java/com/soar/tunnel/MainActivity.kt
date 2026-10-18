@@ -64,11 +64,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val appVer = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "1.4.2"
-        } catch (_: Exception) {
-            "1.4.2"
-        }
+        val appVer = BuildConfig.VERSION_NAME
         binding.tvVersionTag.text = "v$appVer"
 
         setupResolversView()

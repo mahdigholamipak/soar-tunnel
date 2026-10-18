@@ -19,12 +19,7 @@ object UpdateManager {
     private const val GITHUB_REPO = "mahdigholamipak/soar-tunnel"
 
     private fun getAppVersion(activity: Activity): String {
-        return try {
-            val pInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
-            pInfo.versionName ?: "1.0.3"
-        } catch (e: Exception) {
-            "1.0.3"
-        }
+        return BuildConfig.VERSION_NAME
     }
 
     fun checkForUpdates(activity: Activity, silent: Boolean = false) {
