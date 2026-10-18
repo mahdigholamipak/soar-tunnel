@@ -2,6 +2,7 @@ package com.soar.tunnel
 
 import android.graphics.Color
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
@@ -31,9 +32,8 @@ data class ResolverItem(
 
 class ResolverAdapter(
     private var items: List<ResolverItem>,
-    private val onTestClick: (ResolverItem) -> Unit,
-    private val onEditClick: (ResolverItem) -> Unit,
-    private val onDeleteClick: (ResolverItem) -> Unit
+    private val onCardClick: (ResolverItem) -> Unit,
+    private val onOptionsClick: (ResolverItem, View) -> Unit
 ) : RecyclerView.Adapter<ResolverAdapter.ViewHolder>() {
 
     class ViewHolder(val binding: ItemResolverCardBinding) : RecyclerView.ViewHolder(binding.root)
@@ -50,12 +50,10 @@ class ResolverAdapter(
         holder.binding.tvResolverAddr.text = item.addr
 
         if (item.isIran) {
-            holder.binding.tvRegionBadge.text = "IRAN"
-            holder.binding.tvRegionBadge.setBackgroundColor(Color.parseColor("#1E3A8A"))
-            holder.binding.tvRegionBadge.setTextColor(Color.parseColor("#60A5FA"))
+            holder.binding.tvRegionBadge.text = "🇮🇷 IRAN"
+            holder.binding.tvRegionBadge.setTextColor(Color.parseColor("#38BDF8"))
         } else {
-            holder.binding.tvRegionBadge.text = "GLOBAL"
-            holder.binding.tvRegionBadge.setBackgroundColor(Color.parseColor("#334155"))
+            holder.binding.tvRegionBadge.text = "🌐 GLOBAL"
             holder.binding.tvRegionBadge.setTextColor(Color.parseColor("#94A3B8"))
         }
 
@@ -65,27 +63,32 @@ class ResolverAdapter(
             holder.binding.viewStatusDot.setBackgroundColor(Color.parseColor("#64748B"))
             holder.binding.tvLatencyBadge.text = "UNTESTED"
             holder.binding.tvLatencyBadge.setTextColor(Color.parseColor("#94A3B8"))
-            holder.binding.tvResolverStats.text = "Pending latency test"
+            holder.binding.tvResolverStats.text = "Tap card to test latency"
         } else if (item.failCount > 0 && item.successCount == 0) {
             holder.binding.viewStatusDot.setBackgroundColor(ContextCompat.getColor(context, R.color.status_red))
             holder.binding.tvLatencyBadge.text = "FAIL"
             holder.binding.tvLatencyBadge.setTextColor(ContextCompat.getColor(context, R.color.status_red))
-            holder.binding.tvResolverStats.text = "Consecutive failures: ${item.failCount}"
+            holder.binding.tvResolverStats.text = "Offline (${item.failCount} errors)"
         } else {
             val color = when {
-                item.rttMs < 100 -> ContextCompat.getColor(context, R.color.status_green)
+                item.rttMs < 120 -> ContextCompat.getColor(context, R.color.status_green)
                 item.rttMs < 300 -> ContextCompat.getColor(context, R.color.terminal_cyan)
                 else -> ContextCompat.getColor(context, R.color.status_amber)
             }
             holder.binding.viewStatusDot.setBackgroundColor(color)
             holder.binding.tvLatencyBadge.text = "${item.rttMs.toInt()} ms"
             holder.binding.tvLatencyBadge.setTextColor(color)
-            holder.binding.tvResolverStats.text = "Score: ${String.format(java.util.Locale.US, "%.1f", item.score)} • Success: ${item.successCount} • Fail: ${item.failCount}"
+            holder.binding.tvResolverStats.text = "Score ${String.format(java.util.Locale.US, "%.0f", item.score)} • ${item.successCount} ok"
         }
 
-        holder.binding.btnTestSingle.setOnClickListener { onTestClick(item) }
-        holder.binding.btnEditSingle.setOnClickListener { onEditClick(item) }
-        holder.binding.btnDeleteSingle.setOnClickListener { onDeleteClick(item) }
+        holder.binding.root.setOnClickListener { onCardClick(item) }
+        holder.binding.root.setOnLongClickListener {
+            onOptionsClick(item, holder.binding.btnCardMenu)
+            true
+        }
+        holder.binding.btnCardMenu.setOnClickListener { view ->
+            onOptionsClick(item, view)
+        }
     }
 
     override fun getItemCount(): Int = items.size

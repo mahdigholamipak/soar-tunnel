@@ -550,7 +550,7 @@ class MainActivity : AppCompatActivity() {
         if (scanJob?.isActive == true) {
             scanJob?.cancel()
             scanJob = null
-            binding.btnTestResolvers.text = "⚡ Test Latency"
+            binding.btnTestResolvers.text = "⚡ Test All Latency"
             appendThrottledLog("[TEST] Scan stopped by user. Found ${scannedHealthyResults.size} healthy resolvers so far.")
             if (scannedHealthyResults.isNotEmpty()) {
                 val sorted = synchronized(scannedHealthyResults) {
@@ -687,7 +687,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
-                binding.btnTestResolvers.text = "⚡ Test Latency"
+                binding.btnTestResolvers.text = "⚡ Test All Latency"
                 scanJob = null
 
                 if (scannedHealthyResults.isNotEmpty()) {
@@ -749,7 +749,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.4.0\n\n" +
+                "SOAR DNS TUNNEL v1.4.1\n\n" +
                 "Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
@@ -932,9 +932,8 @@ class MainActivity : AppCompatActivity() {
     private fun setupResolversView() {
         resolverAdapter = ResolverAdapter(
             items = listOf(),
-            onTestClick = { item -> testSingleResolver(item) },
-            onEditClick = { item -> editSingleResolver(item) },
-            onDeleteClick = { item -> deleteSingleResolver(item) }
+            onCardClick = { item -> testSingleResolver(item) },
+            onOptionsClick = { item, anchorView -> showResolverOptionsMenu(item, anchorView) }
         )
         binding.rvResolvers.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
         binding.rvResolvers.adapter = resolverAdapter
@@ -953,6 +952,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnFilterIran.setOnClickListener { updateFilterSelection("IRAN") }
         binding.btnFilterGlobal.setOnClickListener { updateFilterSelection("GLOBAL") }
 
+        binding.btnResolverTools.setOnClickListener { showResolverToolsMenu() }
         binding.btnAddResolver.setOnClickListener { promptAddResolver() }
         binding.btnPruneDead.setOnClickListener { pruneDeadResolvers() }
         binding.btnToggleRaw.setOnClickListener {
@@ -965,6 +965,80 @@ class MainActivity : AppCompatActivity() {
             binding.layoutRawEditor.visibility = View.GONE
             Toast.makeText(this, "Saved and applied resolvers list!", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun showResolverOptionsMenu(item: ResolverItem, anchorView: View) {
+        val options = arrayOf(
+            "⚡ Test Latency",
+            "✏ Edit Address",
+            "📋 Copy Address",
+            "🗑 Delete Resolver"
+        )
+        AlertDialog.Builder(this)
+            .setTitle(item.addr)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> testSingleResolver(item)
+                    1 -> editSingleResolver(item)
+                    2 -> {
+                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("Resolver IP", item.addr))
+                        Toast.makeText(this, "Copied ${item.addr} to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+                    3 -> deleteSingleResolver(item)
+                }
+            }
+            .show()
+    }
+
+    private fun showResolverToolsMenu() {
+        val options = arrayOf(
+            "📂 Import Resolvers from File (.txt)",
+            "🧹 Prune Inactive / Dead Resolvers",
+            "📝 Raw Text Editor (Bulk Edit)",
+            "🔄 Restore Default Resolvers",
+            "🗑 Clear All Resolvers"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Resolver Management Tools")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> importResolversFileLauncher.launch("text/*")
+                    1 -> pruneDeadResolvers()
+                    2 -> {
+                        binding.layoutRawEditor.visibility = if (binding.layoutRawEditor.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                        if (binding.layoutRawEditor.visibility == View.VISIBLE) {
+                            binding.etResolvers.requestFocus()
+                        }
+                    }
+                    3 -> {
+                        AlertDialog.Builder(this)
+                            .setTitle("Restore Default Resolvers")
+                            .setMessage("Replace current resolvers with default high-performance list?")
+                            .setPositiveButton("Restore") { _, _ ->
+                                parseResolversFromText(ProfileManager.DEFAULT_RESOLVERS)
+                                saveCurrentProfileFromUI()
+                                Toast.makeText(this, "Restored default resolvers", Toast.LENGTH_SHORT).show()
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    }
+                    4 -> {
+                        AlertDialog.Builder(this)
+                            .setTitle("Clear All Resolvers")
+                            .setMessage("Are you sure you want to clear all candidate resolvers?")
+                            .setPositiveButton("Clear") { _, _ ->
+                                resolverItems.clear()
+                                saveCurrentProfileFromUI()
+                                applyResolverFilter()
+                                Toast.makeText(this, "Cleared resolvers list", Toast.LENGTH_SHORT).show()
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    }
+                }
+            }
+            .show()
     }
 
     private fun parseResolversFromText(rawText: String) {
