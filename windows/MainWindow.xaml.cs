@@ -1148,7 +1148,7 @@ namespace SoarClient
                     var appDir = AppContext.BaseDirectory;
                     var resFileName = string.IsNullOrWhiteSpace(TxtResolversFile?.Text) ? "client_resolvers.txt" : TxtResolversFile.Text.Trim();
                     var candidatePath = Path.Combine(appDir, resFileName);
-                    if (File.Exists(candidatePath))
+                    if (File.Exists(candidatePath) && TxtResolversFile != null)
                     {
                         TxtResolversFile.Text = File.ReadAllText(candidatePath);
                     }
@@ -1472,7 +1472,7 @@ namespace SoarClient
             };
             var panel = new StackPanel { Margin = new Thickness(16) };
             panel.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8")), Margin = new Thickness(0, 0, 0, 8) });
-            var txt = new TextBox { Text = defaultValue, Height = 28, Padding = new Thickness(6, 2), Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#161D28")), Foreground = Brushes.White, BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#263346")), Margin = new Thickness(0, 0, 0, 14) };
+            var txt = new TextBox { Text = defaultValue, Height = 28, Padding = new Thickness(6, 2, 6, 2), Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#161D28")), Foreground = Brushes.White, BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#263346")), Margin = new Thickness(0, 0, 0, 14) };
             panel.Children.Add(txt);
             var btnGrid = new Grid();
             btnGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
