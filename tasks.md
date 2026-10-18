@@ -30,9 +30,9 @@ None. All existing test invariants remain strictly immutable.
   - [x] 4.3 Implement auto-pruning and import/export capabilities in Android
   - [x] 4.4 Update Android version to `1.4.0` (versionCode 14)
 
-- [ ] **Milestone 5: Verification, Release, Deployment & Benchmark**
-  - [ ] 5.1 Format Go files cleanly (`gofmt`) and check type/syntax integrity
-  - [ ] 5.2 Commit, tag `v1.4.0`, push to GitHub, and monitor GitHub Actions Release build
-  - [ ] 5.3 Deploy `soar-server` v1.4.0 to VPS (`95.182.101.232`) and verify service
-  - [ ] 5.4 Deploy updated Windows binaries to `S:\programs\Soar gui`
-  - [ ] 5.5 Execute comparative benchmark and analyze performance improvements
+- [x] **Milestone 5: Verification, Release, Deployment & Benchmark**
+  - [x] 5.1 Format Go files cleanly (`gofmt`) and check type/syntax integrity
+  - [x] 5.2 Commit, tag `v1.4.0`, push to GitHub, and monitor GitHub Actions Release build
+  - [x] 5.3 Deploy `soar-server` v1.4.0 to VPS (`95.182.101.232`) and verify service
+  - [x] 5.4 Deploy updated Windows binaries to `S:\programs\Soar gui`
+  - [x] 5.5 Execute comparative benchmark and analyze performance improvements
