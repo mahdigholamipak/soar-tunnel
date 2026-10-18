@@ -93,6 +93,111 @@ find_free_53xx_port() {
 }
 
 # ------------------------------------------------------------------------------
+# Helper: Cloudflare DNS API Delegation Setup
+# ------------------------------------------------------------------------------
+configure_cloudflare_dns() {
+    local token="$1"
+    local server_ip="$2"
+    local zones_input="$3"
+
+    if [ -z "$token" ]; then
+        echo -e "${YELLOW}Enter your Cloudflare API Token (must have Zone:DNS:Edit permissions):${NC}"
+        read -r -p "API Token: " token
+    fi
+
+    if [ -z "$token" ]; then
+        echo -e "${RED}[ERROR] API Token cannot be empty.${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}[INFO] Validating Cloudflare API token...${NC}"
+    local verify_res
+    verify_res=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json")
+
+    if ! echo "$verify_res" | grep -q '"status":"active"'; then
+        echo -e "${RED}[ERROR] Cloudflare API token is invalid or inactive.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}[OK] Cloudflare API Token is valid and active!${NC}"
+
+    IFS=',' read -ra ZONE_ARR <<< "$zones_input"
+    for zone in "${ZONE_ARR[@]}"; do
+        zone=$(echo "$zone" | tr -d ' ')
+        [ -z "$zone" ] && continue
+
+        local root_domain
+        root_domain=$(echo "$zone" | awk -F. '{if (NF>2) print $(NF-1)"."$NF; else print $0}')
+
+        echo -e "${BLUE}[INFO] Querying Cloudflare Zone ID for: ${root_domain}...${NC}"
+        local zone_info
+        zone_info=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${root_domain}" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json")
+
+        local zone_id
+        zone_id=$(echo "$zone_info" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+
+        if [ -z "$zone_id" ]; then
+            echo -e "${RED}[ERROR] Could not find Cloudflare zone for domain ${root_domain}.${NC}"
+            continue
+        fi
+        echo -e "${GREEN}[OK] Found Zone ID: ${zone_id}${NC}"
+
+        local glue_host="ns-soar.${root_domain}"
+        echo -e "${BLUE}[INFO] Configuring Glue A Record: ${glue_host} -> ${server_ip} (DNS only)...${NC}"
+        local a_check
+        a_check=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${glue_host}" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json")
+
+        local a_id
+        a_id=$(echo "$a_check" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+
+        if [ -n "$a_id" ]; then
+            echo -e "${YELLOW}[INFO] Updating existing A record for ${glue_host}...${NC}"
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${a_id}" \
+                -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"A\",\"name\":\"${glue_host}\",\"content\":\"${server_ip}\",\"ttl\":1,\"proxied\":false}" >/dev/null
+        else
+            echo -e "${BLUE}[INFO] Creating new A record for ${glue_host}...${NC}"
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+                -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"A\",\"name\":\"${glue_host}\",\"content\":\"${server_ip}\",\"ttl\":1,\"proxied\":false}" >/dev/null
+        fi
+        echo -e "${GREEN}[OK] Glue A Record ready: ${glue_host} -> ${server_ip}${NC}"
+
+        echo -e "${BLUE}[INFO] Configuring NS Delegation Record: ${zone} -> ${glue_host}...${NC}"
+        local ns_check
+        ns_check=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=NS&name=${zone}" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json")
+
+        local ns_id
+        ns_id=$(echo "$ns_check" | grep -o '"id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+
+        if [ -n "$ns_id" ]; then
+            echo -e "${YELLOW}[INFO] Updating existing NS record for ${zone}...${NC}"
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${ns_id}" \
+                -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"NS\",\"name\":\"${zone}\",\"content\":\"${glue_host}\",\"ttl\":1}" >/dev/null
+        else
+            echo -e "${BLUE}[INFO] Creating new NS record for ${zone}...${NC}"
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+                -H "Authorization: Bearer $token" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"NS\",\"name\":\"${zone}\",\"content\":\"${glue_host}\",\"ttl\":1}" >/dev/null
+        fi
+        echo -e "${GREEN}[OK] NS Delegation Record ready: ${zone} IN NS ${glue_host}${NC}"
+    done
+    echo -e "${GREEN}[SUCCESS] Cloudflare DNS records automated successfully!${NC}"
+}
+
+# ------------------------------------------------------------------------------
 # Helper: One-Line Auto Update
 # ------------------------------------------------------------------------------
 do_update() {
@@ -224,6 +329,15 @@ else
         echo -e "${RED}Domains cannot be empty!${NC}"
         read -r -p "Domains: " ZONES
     done
+fi
+
+if [ -t 0 ] && ! echo "$*" | grep -q -- "--no-cf"; then
+    echo ""
+    echo -e "${CYAN}Do you want to automatically create DNS records on Cloudflare via API? [y/N]:${NC}"
+    read -r -p "Auto Cloudflare setup: " CF_AUTO
+    if [[ "$CF_AUTO" =~ ^[Yy]$ ]]; then
+        configure_cloudflare_dns "" "$SERVER_IP" "$ZONES" || echo -e "${YELLOW}[WARN] Cloudflare auto-setup skipped or had errors.${NC}"
+    fi
 fi
 
 # 8. Check Port 53 UDP Availability & CottenRouter Co-existence
@@ -546,6 +660,10 @@ toggle_warp() {
     fi
 }
 
+configure_cf() {
+    configure_cloudflare_dns "$1" "$SERVER_IP" "$ZONES"
+}
+
 case "$1" in
     status)
         show_status
@@ -580,6 +698,9 @@ case "$1" in
     warp|proxy)
         toggle_warp "$2"
         ;;
+    cf|cloudflare)
+        configure_cf "$2"
+        ;;
     update)
         update_server
         ;;
@@ -600,9 +721,10 @@ case "$1" in
         echo -e "8) Update Server to Latest GitHub Release"
         echo -e "9) Show CottenRouter Configuration Snippet"
         echo -e "10) Toggle Cloudflare WARP Egress Proxy"
+        echo -e "11) Auto-configure Cloudflare DNS Records (A & NS)"
         echo -e "0) Exit"
         echo -e "${CYAN}=====================================================${NC}"
-        read -r -p "Select option [0-10]: " OPT
+        read -r -p "Select option [0-11]: " OPT
         case "$OPT" in
             1) show_status ;;
             2) journalctl -u soar -f ;;
@@ -614,6 +736,7 @@ case "$1" in
             8) update_server ;;
             9) show_cotten ;;
             10) toggle_warp ;;
+            11) configure_cf ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
@@ -658,6 +781,7 @@ echo -e "   - Open Control Menu:     ${GREEN}soar${NC}"
 echo -e "   - Show Client Link & QR: ${GREEN}soar share${NC}"
 echo -e "   - Privacy-Protected Link:${GREEN}soar share-locked${NC}"
 echo -e "   - CottenRouter Snippet:  ${GREEN}soar cotten${NC}"
+echo -e "   - Cloudflare DNS Setup:  ${GREEN}soar cf${NC}"
 echo -e "   - One-Line Auto Update:  ${GREEN}soar update${NC}"
 echo ""
 echo -e "${CYAN}=====================================================${NC}"

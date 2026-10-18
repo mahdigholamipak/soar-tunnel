@@ -1025,7 +1025,10 @@ func (c *Client) pickPathLocked(now time.Time, exclude *path) *path {
 		// High packet loss causes multi-second RTO timeouts and stream stalls;
 		// heavily penalize lossy paths so low-loss paths are prioritized.
 		lossFactor := math.Pow(math.Max(0.05, 1.0-p.lossRate()), 2.5)
-		score := (float64(rtt) * (1 + float64(p.inflight)/p.cwnd)) / lossFactor
+		// Multi-resolver striping: weight inflight penalty higher (2.5x) so concurrent
+		// queries are striped across multiple healthy, low-loss resolvers rather than
+		// queuing up on a single resolver and triggering ISP rate limits.
+		score := (float64(rtt) * (1.0 + 2.5*float64(p.inflight)/p.cwnd)) / lossFactor
 		if best == nil || score < bestScore {
 			best, bestScore = p, score
 		}

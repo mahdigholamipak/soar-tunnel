@@ -108,26 +108,26 @@ func (t *AdaptiveTuner) recomputeLocked() {
 	case t.lossEWMA >= 0.18 || t.consecLosses >= 3:
 		t.cachedMode = ModeCrisis
 		t.cachedTimeout = 5500 * time.Millisecond
-		t.cachedFEC = 3 // 1 parity per 3 data packets (33% redundancy)
+		t.cachedFEC = 2 // 1 parity per 2 data packets (50% redundancy, survivability during severe packet drops)
 		t.cachedMaxWin = 3
 	case t.lossEWMA >= 0.07 || t.ewmaRTT > 280.0:
 		t.cachedMode = ModeResilient
 		calcTimeout := time.Duration(math.Max(2500, math.Min(6000, 3.5*t.ewmaRTT))) * time.Millisecond
 		t.cachedTimeout = calcTimeout
-		t.cachedFEC = 4 // 1 parity per 4 data packets (25% redundancy)
-		t.cachedMaxWin = 5
+		t.cachedFEC = 3 // 1 parity per 3 data packets (33% redundancy)
+		t.cachedMaxWin = 6
 	case t.ewmaRTT < 85.0 && t.lossEWMA < 0.02:
 		t.cachedMode = ModeUltraFast
 		calcTimeout := time.Duration(math.Max(1500, math.Min(3000, 2.5*t.ewmaRTT))) * time.Millisecond
 		t.cachedTimeout = calcTimeout
 		t.cachedFEC = 8 // 1 parity per 8 data packets (12.5% redundancy)
-		t.cachedMaxWin = 10
+		t.cachedMaxWin = 16
 	default:
 		t.cachedMode = ModeBalanced
 		calcTimeout := time.Duration(math.Max(2000, math.Min(4500, 3.0*t.ewmaRTT))) * time.Millisecond
 		t.cachedTimeout = calcTimeout
-		t.cachedFEC = 6 // 1 parity per 6 data packets (16.7% redundancy)
-		t.cachedMaxWin = 7
+		t.cachedFEC = 5 // 1 parity per 5 data packets (20% redundancy)
+		t.cachedMaxWin = 10
 	}
 }
 

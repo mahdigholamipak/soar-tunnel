@@ -406,6 +406,26 @@ class MainActivity : AppCompatActivity() {
             appendThrottledLog("[CLIPBOARD] Copied SOCKS5 link: $proxyUrl")
         }
 
+        binding.btnExportV2ray.setOnClickListener {
+            val port = binding.etPort.text.toString().trim().ifBlank { "10850" }
+            val v2rayLink = "socks5://127.0.0.1:$port#Soar%20DNS%20Tunnel"
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("v2rayNG Config", v2rayLink))
+
+            val v2Intent = packageManager.getLaunchIntentForPackage("com.v2ray.ang")
+                ?: packageManager.getLaunchIntentForPackage("moe.nb4a")
+                ?: Intent(Intent.ACTION_VIEW, Uri.parse(v2rayLink))
+
+            try {
+                startActivity(v2Intent)
+                Toast.makeText(this, "Config copied! Opening VPN app...", Toast.LENGTH_SHORT).show()
+                appendThrottledLog("[APP] Copied & forwarded SOCKS5 configuration to VPN client.")
+            } catch (_: Exception) {
+                Toast.makeText(this, "Copied config to clipboard for v2rayNG / NekoBox!", Toast.LENGTH_LONG).show()
+                appendThrottledLog("[APP] Copied SOCKS5 config to clipboard for v2rayNG/NekoBox.")
+            }
+        }
+
         binding.btnOpenTelegram.setOnClickListener {
             val port = binding.etPort.text.toString().trim().ifBlank { "10850" }
             val uri = Uri.parse("tg://socks?server=127.0.0.1&port=$port")

@@ -10,6 +10,7 @@
     <string name="status_connecting">Connecting...</string>
     <string name="status_connected">Connected</string>
     <string name="copy_socks">Copy SOCKS5 Link</string>
+    <string name="export_v2ray">v2rayNG / NekoBox</string>
     <string name="open_telegram">Set in Telegram</string>
     <string name="clear_logs">Clear Logs</string>
     <string name="notification_title">Soar DNS Tunnel Active</string>

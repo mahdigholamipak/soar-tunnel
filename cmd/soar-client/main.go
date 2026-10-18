@@ -118,7 +118,11 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 				Country:    country,
 				Candidates: resolvers,
 			},
-			Logger: logger,
+			MaxInflight:   512,
+			MaxPathWindow: 48,
+			StreamWindow:  1024 << 10,
+			SendBuffer:    256 << 10,
+			Logger:        logger,
 		}
 		c, err := soar.NewClient(cfg)
 		if err != nil {

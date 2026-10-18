@@ -52,10 +52,7 @@ object TunnelProcessManager {
             resolversFile.writeText(cleanResolvers + "\n")
         } else {
             // Write default resolvers if missing
-            resolversFile.writeText(
-                "1.1.1.1:53\n1.0.0.1:53\n8.8.8.8:53\n8.8.4.4:53\n" +
-                "178.22.122.100:53\n185.51.200.2:53\n10.202.10.202:53\n217.218.155.155:53\n"
-            )
+            resolversFile.writeText(ProfileManager.DEFAULT_RESOLVERS + "\n")
         }
 
         // 2. Prepare TOML config
