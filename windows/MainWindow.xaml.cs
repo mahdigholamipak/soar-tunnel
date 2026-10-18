@@ -19,7 +19,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.5.0";
+        private const string CurrentVersion = "v1.5.1";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -1776,6 +1776,15 @@ namespace SoarClient
             Clipboard.SetText(proxyUrl);
             AppendLog($"[CLIPBOARD] Copied SOCKS5 proxy address: {proxyUrl}");
             MessageBox.Show($"Proxy link copied to clipboard:\n{proxyUrl}", "Copied", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void BtnExportV2ray_Click(object sender, RoutedEventArgs e)
+        {
+            var port = string.IsNullOrWhiteSpace(TxtListenPort?.Text) ? "10850" : TxtListenPort.Text.Trim();
+            var v2rayLink = $"socks5://127.0.0.1:{port}#Soar%20DNS%20Tunnel";
+            Clipboard.SetText(v2rayLink);
+            AppendLog($"[CLIPBOARD] Copied SOCKS5 URI for v2rayN / Clash / Nekoray: {v2rayLink}");
+            MessageBox.Show($"Configuration URI copied for v2rayN / Clash / Nekoray:\n\n{v2rayLink}\n\n(Tip: In v2rayN or NekoBox, simply press Ctrl+V to import)", "Config Copied", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void BtnSaveConfig_Click(object sender, RoutedEventArgs e)

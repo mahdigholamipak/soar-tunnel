@@ -96,6 +96,7 @@ type MultiClient struct {
 	dialTimeout time.Duration
 	logger      *slog.Logger
 	tuner       *soar.AdaptiveTuner
+	dialSeq     atomic.Uint64
 }
 
 func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []string, country string, dialTimeout time.Duration, logger *slog.Logger) (*MultiClient, error) {
@@ -177,13 +178,17 @@ func (m *MultiClient) SetPathEDNS(addr string, ednsSize uint16) {
 func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn, string, error) {
 	m.mu.RLock()
 	count := len(m.clients)
-	startIdx := m.activeIdx
 	perDialTimeout := m.dialTimeout
 	m.mu.RUnlock()
 
 	if count == 0 {
 		return nil, "", errors.New("no tunnel domains configured")
 	}
+
+	// Active multi-domain striping & load-balancing:
+	// Distribute outgoing connection streams across all healthy domains
+	// so no single domain carries concentrated traffic or triggers DPI/rate limits.
+	startIdx := int(m.dialSeq.Add(1)-1) % count
 
 	// Dynamically compute dial timeout using real-time AdaptiveTuner
 	if m.tuner != nil {

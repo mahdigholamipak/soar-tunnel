@@ -945,7 +945,10 @@ func (cs *clientSession) wantQueries() int {
 		}
 		return 0
 	}
-	return 2 + cs.backlog
+	// Proactive pipelining floor: keep at least 6 queries in flight across resolvers when
+	// active streams exist, so the server always has held query slots ready to immediately
+	// push incoming downstream data without waiting for a round-trip poll.
+	return max(6, 2+cs.backlog)
 }
 
 func (c *Client) fillLocked(now time.Time) {

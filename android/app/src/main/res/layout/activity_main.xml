@@ -379,6 +379,23 @@
                                     android:textColor="@color/text_muted" />
                             </LinearLayout>
                         </LinearLayout>
+
+                        <!-- Row 3: Auto-Tuner & Posture Indicator -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:background="@color/border_dark"
+                            android:layout_marginTop="10dp"
+                            android:layout_marginBottom="8dp" />
+
+                        <TextView
+                            android:id="@+id/tvHeroTuner"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="⚡ Auto-Tuner: Ready"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/terminal_cyan" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 

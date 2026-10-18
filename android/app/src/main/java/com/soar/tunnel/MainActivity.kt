@@ -837,7 +837,7 @@ class MainActivity : AppCompatActivity() {
         TunnelProcessManager.onLogReceived = { logLine ->
             if (logLine.startsWith("[TUNER]")) {
                 runOnUiThread {
-                    binding.tvStatus.text = "CONNECTED • ⚡ ${logLine.removePrefix("[TUNER]").trim()}"
+                    binding.tvHeroTuner.text = "⚡ ${logLine.removePrefix("[TUNER]").trim()}"
                 }
             }
             appendThrottledLog(logLine)
@@ -948,6 +948,7 @@ class MainActivity : AppCompatActivity() {
             binding.viewStatusDot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_green))
             binding.btnConnect.text = getString(R.string.disconnect)
             binding.btnConnect.setBackgroundColor(ContextCompat.getColor(this, R.color.status_red))
+            binding.tvHeroTuner.text = "⚡ Auto-Tuner: Optimizing..."
         } else {
             binding.tvStatus.text = getString(R.string.status_disconnected)
             binding.viewStatusDot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_red))
@@ -958,6 +959,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvHeroTx.text = "0.0 KB/s"
             binding.tvHeroStreams.text = "0"
             binding.tvHeroTotal.text = "0 MB"
+            binding.tvHeroTuner.text = "⚡ Auto-Tuner: Standby"
         }
     }
 
