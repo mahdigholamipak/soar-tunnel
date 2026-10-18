@@ -98,6 +98,16 @@ func NewFECEncoder(k int) *FECEncoder {
 	}
 }
 
+// SetK dynamically adjusts the FEC group size K based on real-time network loss.
+func (e *FECEncoder) SetK(k int) {
+	if k <= 1 || k > MaxFECGroupSize {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.k = k
+}
+
 // AddPacket records an outgoing data packet (by packet number and plaintext payload).
 // If adding this packet completes a group of K, it generates a parity frame ready to send.
 func (e *FECEncoder) AddPacket(pn uint64, payload []byte) *fecFrame {

@@ -35,9 +35,50 @@ var (
 	totalStreams  atomic.Uint64
 )
 
+var (
+	redactEnabled atomic.Bool
+	redactedWords []string
+	redactMu      sync.RWMutex
+)
+
+func setRedactedWords(domains []string, key string) {
+	redactMu.Lock()
+	defer redactMu.Unlock()
+	redactedWords = nil
+	for _, d := range domains {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			redactedWords = append(redactedWords, d)
+		}
+	}
+	if key = strings.TrimSpace(key); key != "" {
+		redactedWords = append(redactedWords, key)
+	}
+	redactEnabled.Store(true)
+}
+
+func sanitizeLog(msg string) string {
+	if !redactEnabled.Load() {
+		return msg
+	}
+	redactMu.RLock()
+	defer redactMu.RUnlock()
+	for i, w := range redactedWords {
+		if strings.Contains(msg, w) {
+			replacement := fmt.Sprintf("[protected-domain-%d]", i+1)
+			if len(w) > 32 {
+				replacement = "[protected-key]"
+			}
+			msg = strings.ReplaceAll(msg, w, replacement)
+		}
+	}
+	return msg
+}
+
 func logMsg(level, format string, args ...any) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, args...)
+	msg = sanitizeLog(msg)
 	fmt.Fprintf(os.Stderr, "[%s] [%s] %s\n", ts, level, msg)
 }
 
@@ -54,6 +95,7 @@ type MultiClient struct {
 	activeIdx   int
 	dialTimeout time.Duration
 	logger      *slog.Logger
+	tuner       *soar.AdaptiveTuner
 }
 
 func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []string, country string, dialTimeout time.Duration, logger *slog.Logger) (*MultiClient, error) {
@@ -98,6 +140,7 @@ func NewMultiClient(zones []string, serverKey ed25519.PublicKey, resolvers []str
 		activeIdx:   0,
 		dialTimeout: dialTimeout,
 		logger:      logger,
+		tuner:       soar.NewAdaptiveTuner(),
 	}, nil
 }
 
@@ -138,8 +181,10 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 		return nil, "", errors.New("no tunnel domains configured")
 	}
 
-	// For multi-domain configs, cap per-domain attempt to 4s for rapid failover
-	if count > 1 && perDialTimeout > 4*time.Second {
+	// Dynamically compute dial timeout using real-time AdaptiveTuner
+	if m.tuner != nil {
+		perDialTimeout = m.tuner.DialTimeout()
+	} else if count > 1 && perDialTimeout > 4*time.Second {
 		perDialTimeout = 4 * time.Second
 	}
 
@@ -167,11 +212,16 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 			continue
 		}
 
+		t0 := time.Now()
 		dialCtx, cancel := context.WithTimeout(ctx, perDialTimeout)
 		conn, err := entry.client.DialContext(dialCtx, network, addr)
 		cancel()
+		elapsed := time.Since(t0)
 
 		if err == nil {
+			if m.tuner != nil {
+				m.tuner.RecordSample(elapsed, false)
+			}
 			entry.failures.Store(0)
 			if idx != startIdx {
 				m.mu.Lock()
@@ -183,6 +233,9 @@ func (m *MultiClient) Dial(ctx context.Context, network, addr string) (net.Conn,
 		}
 
 		lastErr = err
+		if m.tuner != nil {
+			m.tuner.RecordSample(elapsed, true)
+		}
 		entry.failures.Add(1)
 		entry.lastFail = time.Now()
 		if count > 1 {
@@ -211,6 +264,7 @@ func main() {
 	urlFlag := flag.String("url", "", "soar:// profile or locked link to import configuration from")
 	flag.StringVar(urlFlag, "u", "", "alias for -url")
 	verbose := flag.Bool("v", false, "debug logging")
+	redactFlag := flag.Bool("redact", false, "redact sensitive domains and server keys from log output")
 	flag.Parse()
 
 	// 1. Locate config file
@@ -329,6 +383,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *redactFlag || cfg.Redact || cfg.Locked {
+		setRedactedWords(cfg.Domains, cfg.ServerPublicKey)
+	}
+
 	keyBytes, err := base64.StdEncoding.DecodeString(cfg.ServerPublicKey)
 	if err != nil || len(keyBytes) != ed25519.PublicKeySize {
 		logMsg("ERROR", "Invalid server public key: must be 32 bytes base64 (got %d bytes)", len(keyBytes))
@@ -443,6 +501,10 @@ func main() {
 			// Machine-readable telemetry for GUI & Android
 			fmt.Fprintf(os.Stderr, "[TELEMETRY] tx=%d rx=%d tx_rate=%.1f rx_rate=%.1f streams=%d\n",
 				tx, rx, rateTx, rateRx, active)
+
+			if tickCount%3 == 0 && multiClient != nil && multiClient.tuner != nil {
+				fmt.Fprintln(os.Stderr, multiClient.tuner.TelemetryLine(len(resolvers), len(resolvers)))
+			}
 
 			tickCount++
 			if tickCount%15 == 0 && (active > 0 || total > 0) {

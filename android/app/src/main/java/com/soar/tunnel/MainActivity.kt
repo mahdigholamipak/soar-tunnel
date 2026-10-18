@@ -47,6 +47,10 @@ class MainActivity : AppCompatActivity() {
     }
     private var lastDetectedClipboard = ""
 
+    private var resolverItems = mutableListOf<ResolverItem>()
+    private lateinit var resolverAdapter: ResolverAdapter
+    private var currentResolverFilter = "ALL"
+
     private val importResolversFileLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -60,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        setupResolversView()
         loadProfiles()
         setupTabs()
         setupListeners()
@@ -183,7 +188,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.etPort.setText(profile.port.toString())
-        binding.etResolvers.setText(profile.resolvers.ifBlank { ProfileManager.DEFAULT_RESOLVERS })
+        val resText = profile.resolvers.ifBlank { ProfileManager.DEFAULT_RESOLVERS }
+        binding.etResolvers.setText(resText)
+        parseResolversFromText(resText)
         binding.tvProfileSummary.text = "Profile: ${profile.name} ${if (profile.isLocked) "(Locked)" else ""}"
         binding.tvProxyPortBadge.text = ":${profile.port}"
     }
@@ -197,7 +204,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         current.port = binding.etPort.text.toString().toIntOrNull() ?: 10850
-        current.resolvers = binding.etResolvers.text.toString().trim()
+        if (resolverItems.isNotEmpty()) {
+            current.resolvers = resolverItems.joinToString("\n") { it.addr }
+        } else {
+            current.resolvers = binding.etResolvers.text.toString().trim()
+        }
+        binding.etResolvers.setText(current.resolvers)
 
         ProfileManager.saveProfiles(this, profiles)
         ProfileManager.setActiveProfileId(this, current.id)
@@ -343,8 +355,9 @@ class MainActivity : AppCompatActivity() {
                 .setTitle("Clear Resolvers")
                 .setMessage("Clear candidate resolvers list?")
                 .setPositiveButton("Clear") { _, _ ->
-                    binding.etResolvers.setText("")
+                    resolverItems.clear()
                     saveCurrentProfileFromUI()
+                    applyResolverFilter()
                     Toast.makeText(this, "Cleared resolvers list", Toast.LENGTH_SHORT).show()
                 }
                 .setNegativeButton("Cancel", null)
@@ -352,7 +365,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnResetDefaultResolvers.setOnClickListener {
-            binding.etResolvers.setText(ProfileManager.DEFAULT_RESOLVERS)
+            parseResolversFromText(ProfileManager.DEFAULT_RESOLVERS)
             saveCurrentProfileFromUI()
             Toast.makeText(this, "Restored default resolvers", Toast.LENGTH_SHORT).show()
         }
@@ -432,16 +445,15 @@ class MainActivity : AppCompatActivity() {
                 .setTitle("Import Resolvers (.txt)")
                 .setMessage("Found ${lines.size} resolvers in selected file.\n\nChoose import mode:")
                 .setPositiveButton("Overwrite") { _, _ ->
-                    binding.etResolvers.setText(lines.joinToString("\n"))
+                    parseResolversFromText(lines.joinToString("\n"))
                     saveCurrentProfileFromUI()
                     appendThrottledLog("[RESOLVER] Overwrote active resolvers with ${lines.size} candidate resolvers from file.")
                     Toast.makeText(this, "Loaded ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
                 }
                 .setNeutralButton("Append") { _, _ ->
-                    val existing = binding.etResolvers.text.toString().split("\n")
-                        .map { it.trim() }.filter { it.isNotEmpty() }
-                    val merged = (existing + lines).distinct()
-                    binding.etResolvers.setText(merged.joinToString("\n"))
+                    val currentAddrs = resolverItems.map { it.addr }
+                    val merged = (currentAddrs + lines).distinct()
+                    parseResolversFromText(merged.joinToString("\n"))
                     saveCurrentProfileFromUI()
                     appendThrottledLog("[RESOLVER] Appended ${lines.size} candidate resolvers (Total: ${merged.size}).")
                     Toast.makeText(this, "Appended ${lines.size} resolvers", Toast.LENGTH_SHORT).show()
@@ -632,7 +644,10 @@ class MainActivity : AppCompatActivity() {
                             val elapsed = System.currentTimeMillis() - startTime
                             socket.close()
 
+                            val ep = if (r.contains(":")) r else "$r:53"
                             if (recvPacket.length < 12) {
+                                val item = resolverItems.find { it.addr.equals(ep, true) }
+                                item?.let { it.failCount++; withContext(Dispatchers.Main) { applyResolverFilter() } }
                                 appendThrottledLog("[BAD] $r (short response)")
                                 return@async
                             }
@@ -644,13 +659,26 @@ class MainActivity : AppCompatActivity() {
                             val ns = ((buf[8].toInt() and 0xFF) shl 8) or (buf[9].toInt() and 0xFF)
 
                             if (!qr || !ra || rcode != 0 || (an == 0 && ns == 0)) {
+                                val item = resolverItems.find { it.addr.equals(ep, true) }
+                                item?.let { it.failCount++; withContext(Dispatchers.Main) { applyResolverFilter() } }
                                 appendThrottledLog("[REJECTED] $r (RA=$ra, RCODE=$rcode)")
                                 return@async
                             }
 
-                            scannedHealthyResults.add(Pair(r, elapsed))
-                            appendThrottledLog("[OK] $r -> ${elapsed}ms")
+                            scannedHealthyResults.add(Pair(ep, elapsed))
+                            val item = resolverItems.find { it.addr.equals(ep, true) }
+                            if (item != null) {
+                                item.rttMs = elapsed.toDouble()
+                                item.isTested = true
+                                item.successCount++
+                                item.score = 100.0 - (elapsed * 0.1).coerceAtMost(50.0)
+                                withContext(Dispatchers.Main) { applyResolverFilter() }
+                            }
+                            appendThrottledLog("[OK] $ep -> ${elapsed}ms")
                         } catch (_: Exception) {
+                            val ep = if (r.contains(":")) r else "$r:53"
+                            val item = resolverItems.find { it.addr.equals(ep, true) }
+                            item?.let { it.failCount++; withContext(Dispatchers.Main) { applyResolverFilter() } }
                             appendThrottledLog("[TIMEOUT] $r")
                         }
                     }
@@ -696,14 +724,14 @@ class MainActivity : AppCompatActivity() {
             .setMessage(messageBuilder.toString())
             .setPositiveButton("Use Fastest 5 (Recommended)") { _, _ ->
                 val top5 = results.take(5).map { it.first }
-                binding.etResolvers.setText(top5.joinToString("\n"))
+                parseResolversFromText(top5.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied top ${top5.size} fastest resolvers!", Toast.LENGTH_SHORT).show()
                 appendThrottledLog("[RESOLVER] Saved top ${top5.size} fastest resolvers to profile.")
             }
             .setNeutralButton("Use All Working (${results.size})") { _, _ ->
                 val allWorking = results.map { it.first }
-                binding.etResolvers.setText(allWorking.joinToString("\n"))
+                parseResolversFromText(allWorking.joinToString("\n"))
                 saveCurrentProfileFromUI()
                 Toast.makeText(this, "Applied all ${allWorking.size} working resolvers!", Toast.LENGTH_SHORT).show()
                 appendThrottledLog("[RESOLVER] Saved all ${allWorking.size} working resolvers to profile.")
@@ -721,16 +749,16 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("About Soar DNS Tunnel")
             .setMessage(
-                "SOAR DNS TUNNEL v1.0.9\n\n" +
+                "SOAR DNS TUNNEL v1.4.0\n\n" +
                 "Attribution & Credits:\n" +
                 "Built upon the core Soar DNS tunneling protocol developed and open-sourced by Lantern (github.com/getlantern/soar) under the Apache License 2.0.\n\n" +
                 "Ecosystem Enhancements:\n" +
                 "• MasterDnsVPN & TheFeed inspired UI/UX\n" +
-                "• Hero Dashboard & Live Speedometer telemetry\n" +
-                "• Candidate resolver TXT file import & management\n" +
+                "• Smart Adaptive Real-Time Network Tuner (EWMA RTT & FEC scaling)\n" +
+                "• Full Redaction Shield on locked profiles (soar://locked)\n" +
+                "• Live card scoreboard with latency ranking, search, and region tags\n" +
                 "• QR Code profile sharing & clipboard auto-detect\n" +
                 "• Multi-domain failover & EWMA latency probing\n" +
-                "• Privacy-preserving locked profiles (soar://locked)\n" +
                 "• In-app GitHub release updates\n\n" +
                 "Repository: github.com/mahdigholamipak/soar-tunnel"
             )
@@ -757,6 +785,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(SoarService.EXTRA_DOMAINS, p.domains)
             putExtra(SoarService.EXTRA_PORT, p.port)
             putExtra(SoarService.EXTRA_RESOLVERS, p.resolvers)
+            putExtra(SoarService.EXTRA_LOCKED, p.isLocked)
         }
         ContextCompat.startForegroundService(this, serviceIntent)
         updateUIState(true)
@@ -774,6 +803,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun observeTunnelEvents() {
         TunnelProcessManager.onLogReceived = { logLine ->
+            if (logLine.startsWith("[TUNER]")) {
+                runOnUiThread {
+                    binding.tvStatus.text = "CONNECTED • ⚡ ${logLine.removePrefix("[TUNER]").trim()}"
+                }
+            }
             appendThrottledLog(logLine)
         }
 
@@ -810,8 +844,20 @@ class MainActivity : AppCompatActivity() {
 
     // Thread-safe, throttled log aggregator that prevents Choreographer / UI thread lockups
     private fun appendThrottledLog(line: String) {
+        var sanitized = line
+        val p = activeProfile
+        if (p != null && p.isLocked) {
+            val dList = p.domains.split(",", ";").map { it.trim() }.filter { it.isNotEmpty() }
+            for ((idx, d) in dList.withIndex()) {
+                sanitized = sanitized.replace(d, "[protected-domain-${idx + 1}]")
+            }
+            if (p.serverKey.isNotEmpty()) {
+                sanitized = sanitized.replace(p.serverKey, "[protected-key]")
+            }
+        }
+
         synchronized(logLines) {
-            logLines.add(line)
+            logLines.add(sanitized)
             if (logLines.size > MAX_LOG_LINES) {
                 logLines.removeAt(0)
             }
@@ -880,6 +926,266 @@ class MainActivity : AppCompatActivity() {
             binding.tvHeroTx.text = "0.0 KB/s"
             binding.tvHeroStreams.text = "0"
             binding.tvHeroTotal.text = "0 MB"
+        }
+    }
+
+    private fun setupResolversView() {
+        resolverAdapter = ResolverAdapter(
+            items = listOf(),
+            onTestClick = { item -> testSingleResolver(item) },
+            onEditClick = { item -> editSingleResolver(item) },
+            onDeleteClick = { item -> deleteSingleResolver(item) }
+        )
+        binding.rvResolvers.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+        binding.rvResolvers.adapter = resolverAdapter
+
+        binding.etResolverSearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                applyResolverFilter()
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
+        binding.btnFilterAll.setOnClickListener { updateFilterSelection("ALL") }
+        binding.btnFilterHealthy.setOnClickListener { updateFilterSelection("HEALTHY") }
+        binding.btnFilterFast.setOnClickListener { updateFilterSelection("FAST") }
+        binding.btnFilterIran.setOnClickListener { updateFilterSelection("IRAN") }
+        binding.btnFilterGlobal.setOnClickListener { updateFilterSelection("GLOBAL") }
+
+        binding.btnAddResolver.setOnClickListener { promptAddResolver() }
+        binding.btnPruneDead.setOnClickListener { pruneDeadResolvers() }
+        binding.btnToggleRaw.setOnClickListener {
+            binding.layoutRawEditor.visibility = if (binding.layoutRawEditor.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        binding.btnSaveRawResolvers.setOnClickListener {
+            val text = binding.etResolvers.text.toString()
+            parseResolversFromText(text)
+            saveCurrentProfileFromUI()
+            binding.layoutRawEditor.visibility = View.GONE
+            Toast.makeText(this, "Saved and applied resolvers list!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun parseResolversFromText(rawText: String) {
+        val lines = rawText.split("\n", ",", ";")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith(";") }
+            .distinct()
+
+        val existingMap = resolverItems.associateBy { it.addr }
+        resolverItems = lines.map { addr ->
+            val formatted = if (addr.contains(":")) addr else "$addr:53"
+            existingMap[formatted] ?: existingMap[addr] ?: ResolverItem(addr = formatted)
+        }.toMutableList()
+
+        applyResolverFilter()
+    }
+
+    private fun updateFilterSelection(filter: String) {
+        currentResolverFilter = filter
+        val chips = listOf(
+            Pair(binding.btnFilterAll, "ALL"),
+            Pair(binding.btnFilterHealthy, "HEALTHY"),
+            Pair(binding.btnFilterFast, "FAST"),
+            Pair(binding.btnFilterIran, "IRAN"),
+            Pair(binding.btnFilterGlobal, "GLOBAL")
+        )
+        for ((btn, key) in chips) {
+            if (key == filter) {
+                btn.setBackgroundResource(R.drawable.bg_chip_selected)
+                btn.setTextColor(Color.WHITE)
+            } else {
+                btn.setBackgroundResource(R.drawable.bg_chip_unselected)
+                btn.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
+            }
+        }
+        applyResolverFilter()
+    }
+
+    private fun applyResolverFilter() {
+        val query = binding.etResolverSearch.text?.toString()?.trim()?.lowercase() ?: ""
+        val filtered = resolverItems.filter { item ->
+            val matchesQuery = query.isEmpty() || item.addr.lowercase().contains(query)
+            val matchesCategory = when (currentResolverFilter) {
+                "HEALTHY" -> item.isTested && item.rttMs > 0 && item.failCount == 0
+                "FAST" -> item.isTested && item.rttMs in 1.0..120.0
+                "IRAN" -> item.isIran
+                "GLOBAL" -> !item.isIran
+                else -> true
+            }
+            matchesQuery && matchesCategory
+        }
+
+        resolverAdapter.updateList(filtered)
+        binding.tvResolverSummary.text = "${filtered.size}/${resolverItems.size} Resolvers"
+    }
+
+    private fun promptAddResolver() {
+        val input = EditText(this).apply {
+            hint = "IP address or IP:53 (e.g. 178.22.122.100)"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Add DNS Resolver")
+            .setView(input)
+            .setPositiveButton("Add") { _, _ ->
+                val raw = input.text.toString().trim()
+                if (raw.isNotEmpty()) {
+                    val ep = if (raw.contains(":")) raw else "$raw:53"
+                    if (resolverItems.none { it.addr.equals(ep, true) }) {
+                        resolverItems.add(0, ResolverItem(addr = ep))
+                        saveCurrentProfileFromUI()
+                        applyResolverFilter()
+                        Toast.makeText(this, "Added $ep", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun editSingleResolver(item: ResolverItem) {
+        val input = EditText(this).apply {
+            setText(item.addr)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Edit DNS Resolver")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val newAddr = input.text.toString().trim()
+                if (newAddr.isNotEmpty()) {
+                    item.addr = if (newAddr.contains(":")) newAddr else "$newAddr:53"
+                    saveCurrentProfileFromUI()
+                    applyResolverFilter()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteSingleResolver(item: ResolverItem) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete Resolver")
+            .setMessage("Remove ${item.addr} from candidate resolvers?")
+            .setPositiveButton("Delete") { _, _ ->
+                resolverItems.remove(item)
+                saveCurrentProfileFromUI()
+                applyResolverFilter()
+                Toast.makeText(this, "Removed ${item.addr}", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pruneDeadResolvers() {
+        val dead = resolverItems.filter { it.failCount >= 3 && it.successCount == 0 }
+        if (dead.isEmpty()) {
+            Toast.makeText(this, "No dead resolvers found to prune (3+ failures, 0 success)", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Prune Dead Resolvers")
+            .setMessage("Found ${dead.size} dead resolvers with 3+ failures. Remove them all?")
+            .setPositiveButton("Prune") { _, _ ->
+                resolverItems.removeAll(dead)
+                saveCurrentProfileFromUI()
+                applyResolverFilter()
+                Toast.makeText(this, "Pruned ${dead.size} dead resolvers", Toast.LENGTH_SHORT).show()
+                appendThrottledLog("[RESOLVER] Pruned ${dead.size} dead resolvers.")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun testSingleResolver(item: ResolverItem) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val domainsText = binding.etDomains.text.toString().trim()
+            val targetDomain = domainsText.split(",", ";", "\n")
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.contains("Protected") } ?: ""
+            val probeTargetName = if (targetDomain.isNotEmpty()) targetDomain else "google.com"
+
+            val dnsQuery = buildDnsQuery(probeTargetName)
+            val host = item.addr.substringBefore(":")
+            val port = item.addr.substringAfter(":").toIntOrNull() ?: 53
+
+            val startTime = System.currentTimeMillis()
+            try {
+                val socket = DatagramSocket()
+                socket.soTimeout = 1200
+                val address = InetAddress.getByName(host)
+                val packet = DatagramPacket(dnsQuery, dnsQuery.size, address, port)
+                socket.send(packet)
+
+                val buf = ByteArray(512)
+                val recvPacket = DatagramPacket(buf, buf.size)
+                socket.receive(recvPacket)
+                val elapsed = (System.currentTimeMillis() - startTime).toDouble()
+                socket.close()
+
+                if (recvPacket.length >= 12) {
+                    val qr = (buf[2].toInt() and 0x80) != 0
+                    val ra = (buf[3].toInt() and 0x80) != 0
+                    val rcode = buf[3].toInt() and 0x0F
+                    if (qr && ra && rcode == 0) {
+                        item.rttMs = elapsed
+                        item.isTested = true
+                        item.successCount++
+                        item.score = 100.0 - (elapsed * 0.1).coerceAtMost(50.0)
+                        withContext(Dispatchers.Main) {
+                            applyResolverFilter()
+                            appendThrottledLog("[RESOLVER] ${item.addr} -> ${elapsed.toInt()}ms (OK)")
+                        }
+                        return@launch
+                    }
+                }
+                item.failCount++
+                withContext(Dispatchers.Main) {
+                    applyResolverFilter()
+                    appendThrottledLog("[RESOLVER] ${item.addr} (invalid response)")
+                }
+            } catch (e: Exception) {
+                item.failCount++
+                withContext(Dispatchers.Main) {
+                    applyResolverFilter()
+                    appendThrottledLog("[RESOLVER] ${item.addr} timeout")
+                }
+            }
+        }
+    }
+
+    private fun buildDnsQuery(targetDomain: String): ByteArray {
+        return if (targetDomain.isNotEmpty()) {
+            val q = mutableListOf<Byte>(
+                0x12, 0x34,
+                0x01, 0x00,
+                0x00, 0x01,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            )
+            for (part in targetDomain.split(".")) {
+                if (part.isNotEmpty()) {
+                    q.add(part.length.toByte())
+                    for (c in part) {
+                        q.add(c.code.toByte())
+                    }
+                }
+            }
+            q.add(0x00)
+            q.add(0x00); q.add(0x06) // Type SOA
+            q.add(0x00); q.add(0x01) // Class IN
+            q.toByteArray()
+        } else {
+            byteArrayOf(
+                0x12, 0x34,
+                0x01, 0x00,
+                0x00, 0x01,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x06, 'g'.code.toByte(), 'o'.code.toByte(), 'o'.code.toByte(), 'g'.code.toByte(), 'l'.code.toByte(), 'e'.code.toByte(),
+                0x03, 'c'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte(),
+                0x00,
+                0x00, 0x01,
+                0x00, 0x01
+            )
         }
     }
 }

@@ -80,7 +80,7 @@
                         <TextBlock Text="SOAR" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" Margin="0,0,8,0" />
                         <TextBlock Text="DNS TUNNEL" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,12,0" />
                         <Border Background="#0369A1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock Text="v1.3.0" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+                            <TextBlock Text="v1.4.0" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
                         </Border>
                     </StackPanel>
                     <TextBlock Text="Resilient Multi-Domain DNS Tunneling | Based on Lantern Soar Protocol" FontSize="11" Foreground="#64748B" Margin="0,2,0,0" />
@@ -184,6 +184,8 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="4" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="6" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -208,6 +210,10 @@
                                 <StackPanel Grid.Row="2" Grid.Column="1">
                                     <TextBlock Text="TOTAL DATA" FontSize="9.5" Foreground="#64748B" FontWeight="Bold" />
                                     <TextBlock x:Name="TxtHeroTotal" Text="0 MB" FontSize="12.5" FontWeight="SemiBold" Foreground="#94A3B8" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2">
+                                    <TextBlock x:Name="TxtHeroTuner" Text="⚡ Auto-Tuner: Ready" FontSize="10" FontWeight="SemiBold" Foreground="#38BDF8" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -276,15 +282,43 @@
                     <TabItem Header="🌐 Resolvers &amp; Bank">
                         <Grid Margin="0,8,0,0">
                             <Grid.RowDefinitions>
+                                <!-- Row 0: Search & Filter Pills -->
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="120" />
+                                <!-- Row 1: Actions Toolbar -->
                                 <RowDefinition Height="Auto" />
+                                <!-- Row 2: Status & Counts -->
+                                <RowDefinition Height="Auto" />
+                                <!-- Row 3: Main Cards ListView -->
                                 <RowDefinition Height="*" />
+                                <!-- Row 4: Raw Text Editor (Collapsible) -->
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
-                            <!-- Actions Bar -->
+                            <!-- Row 0: Search & Filter Bar -->
                             <Grid Grid.Row="0" Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <!-- Search Box -->
+                                <TextBox x:Name="TxtResolverSearch" Grid.Column="0" Height="28" TextChanged="TxtResolverSearch_TextChanged" VerticalContentAlignment="Center" Padding="8,2" Background="#0F172A" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11" ToolTip="Filter by IP address or port" />
+                                
+                                <!-- Filter Pills -->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                    <Button x:Name="BtnFilterAll" Click="BtnFilterAll_Click" Content="All (40)" Height="28" Padding="10,2" Margin="0,0,4,0" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Cursor="Hand" />
+                                    <Button x:Name="BtnFilterHealthy" Click="BtnFilterHealthy_Click" Content="Healthy" Height="28" Padding="10,2" Margin="0,0,4,0" Background="#1E293B" Foreground="#10B981" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Cursor="Hand" />
+                                    <Button x:Name="BtnFilterFast" Click="BtnFilterFast_Click" Content="Fast (&lt;100ms)" Height="28" Padding="10,2" Margin="0,0,4,0" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Cursor="Hand" />
+                                    <Button x:Name="BtnFilterIran" Click="BtnFilterIran_Click" Content="Iran" Height="28" Padding="10,2" Margin="0,0,4,0" Background="#1E293B" Foreground="#C084FC" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Cursor="Hand" />
+                                    <Button x:Name="BtnFilterGlobal" Click="BtnFilterGlobal_Click" Content="Global" Height="28" Padding="10,2" Background="#1E293B" Foreground="#94A3B8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Cursor="Hand" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Row 1: Actions Toolbar -->
+                            <Grid Grid.Row="1" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="6" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="6" />
                                     <ColumnDefinition Width="Auto" />
@@ -296,35 +330,98 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Button x:Name="BtnImportResolversFile" Grid.Column="0" Click="BtnImportResolversFile_Click" Height="28" Padding="10,2" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📂 Import .txt" ToolTip="Import custom candidate resolvers from any text file" />
-                                <Button x:Name="BtnTestResolvers" Grid.Column="2" Click="BtnTestResolvers_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="⚡ Test Latency" ToolTip="Run parallel health &amp; latency test on candidate resolvers" />
-                                <Button x:Name="BtnRefreshBank" Grid.Column="4" Click="BtnRefreshBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#A855F7" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🔄 Reload" ToolTip="Reload cached resolvers from resolvers_bank.json" />
-                                <Button x:Name="BtnDeleteBankEntry" Grid.Column="6" Click="BtnDeleteBankEntry_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#EF4444" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🗑 Delete" ToolTip="Delete selected resolver from persistent bank" />
-                                <Button x:Name="BtnClearBank" Grid.Column="8" Click="BtnClearBank_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#F59E0B" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🧹 Clear All" ToolTip="Clear entire persistent resolver bank" />
+                                <Button x:Name="BtnAddResolver" Grid.Column="0" Click="BtnAddResolver_Click" Height="28" Padding="10,2" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="+ Add Resolver" ToolTip="Add a custom resolver IP:port" />
+                                <Button x:Name="BtnImportResolversFile" Grid.Column="2" Click="BtnImportResolversFile_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📂 Import .txt" ToolTip="Import custom candidate resolvers from text file" />
+                                <Button x:Name="BtnTestResolvers" Grid.Column="4" Click="BtnTestResolvers_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#10B981" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="⚡ Test All" ToolTip="Run parallel health &amp; latency test on resolvers" />
+                                <Button x:Name="BtnPruneDead" Grid.Column="6" Click="BtnPruneDead_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#EF4444" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="🧹 Prune Dead" ToolTip="Automatically remove unresponsive dead resolvers" />
+                                <Button x:Name="BtnExportResolvers" Grid.Column="8" Click="BtnExportResolvers_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#A855F7" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📋 Export" ToolTip="Export current resolvers list to clipboard" />
+                                <Button x:Name="BtnToggleRawEditor" Grid.Column="10" Click="BtnToggleRawEditor_Click" Height="28" Padding="10,2" Background="#1E293B" Foreground="#F59E0B" BorderThickness="0" FontSize="11" FontWeight="SemiBold" Content="📝 Raw Editor" ToolTip="Toggle raw text file editor" />
                             </Grid>
 
-                            <!-- Candidate Resolvers Text Area -->
-                            <TextBox x:Name="TxtResolversFile" Grid.Row="1" Text="client_resolvers.txt" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,0,0,10" ToolTip="Active candidate resolvers file name or list" />
-
-                            <!-- Resolver Bank Header -->
+                            <!-- Row 2: Status & Counts -->
                             <Grid Grid.Row="2" Margin="0,0,0,6">
-                                <TextBlock Text="PERSISTENT RESOLVER BANK (EWMA LATENCY &amp; HEALTH RANKING)" FontWeight="SemiBold" Foreground="#A855F7" FontSize="11" VerticalAlignment="Center" />
-                                <TextBlock x:Name="TxtBankCount" HorizontalAlignment="Right" Text="0 cached" Foreground="#64748B" FontSize="11" />
+                                <TextBlock x:Name="TxtBankCount" Text="40 Resolvers | 14 Healthy in Bank" FontWeight="SemiBold" Foreground="#A855F7" FontSize="11" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TxtTunerStatus" HorizontalAlignment="Right" Text="⚡ Posture: Ready" Foreground="#38BDF8" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
                             </Grid>
 
-                            <!-- Resolver Bank Cache ListView -->
-                            <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" Foreground="#F8FAFC" BorderBrush="#1E293B" BorderThickness="1" FontSize="11" KeyDown="LvResolverBank_KeyDown">
-                                <ListView.View>
-                                    <GridView>
-                                        <GridViewColumn Header="Resolver Address" Width="150" DisplayMemberBinding="{Binding Addr}" />
-                                        <GridViewColumn Header="EWMA Ping" Width="80" DisplayMemberBinding="{Binding RTTFormatted}" />
-                                        <GridViewColumn Header="EDNS0" Width="70" DisplayMemberBinding="{Binding EDNSFormatted}" />
-                                        <GridViewColumn Header="Score" Width="75" DisplayMemberBinding="{Binding ScoreFormatted}" />
-                                        <GridViewColumn Header="Success / Fail" Width="95" DisplayMemberBinding="{Binding SuccessFailFormatted}" />
-                                        <GridViewColumn Header="Last Verified" Width="135" DisplayMemberBinding="{Binding LastVerifiedFormatted}" />
-                                    </GridView>
-                                </ListView.View>
+                            <!-- Row 3: Card-Style ListView -->
+                            <ListView x:Name="LvResolverBank" Grid.Row="3" Background="#080C14" BorderBrush="#1E293B" BorderThickness="1" ScrollViewer.HorizontalScrollBarVisibility="Disabled" KeyDown="LvResolverBank_KeyDown">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="Margin" Value="0,0,0,4" />
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListViewItem">
+                                                    <ContentPresenter />
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,2,0,2">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <!-- Status Dot -->
+                                                <Ellipse Grid.Column="0" Width="10" Height="10" Fill="{Binding StatusBrush}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                                
+                                                <!-- IP, Port & Tags -->
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Addr}" FontFamily="Consolas" FontSize="12.5" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                        <Border Background="{Binding RegionBadgeBackground}" CornerRadius="3" Padding="5,1" Margin="0,0,4,0" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding RegionTag}" FontSize="9.5" FontWeight="Bold" Foreground="{Binding RegionTagColor}" />
+                                                        </Border>
+                                                        <Border Background="#064E3B" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding EDNSFormatted}" FontSize="9.5" FontWeight="Bold" Foreground="#34D399" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding StatsSummary}" FontSize="10" Foreground="#64748B" Margin="0,2,0,0" />
+                                                </StackPanel>
+                                                
+                                                <!-- Latency & Score Pill -->
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                    <Border Background="#1E293B" CornerRadius="4" Padding="8,4" Margin="0,0,6,0">
+                                                        <TextBlock Text="{Binding RTTFormatted}" FontSize="11" FontWeight="Bold" Foreground="{Binding StatusBrush}" />
+                                                    </Border>
+                                                    <Border Background="#1E293B" CornerRadius="4" Padding="6,4">
+                                                        <TextBlock Text="{Binding ScoreFormatted}" FontSize="11" FontWeight="SemiBold" Foreground="#94A3B8" />
+                                                    </Border>
+                                                </StackPanel>
+                                                
+                                                <!-- Actions -->
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Button Click="BtnTestSingle_Click" Tag="{Binding Addr}" Content="⚡" ToolTip="Test this resolver" Width="26" Height="26" Background="#1E293B" Foreground="#38BDF8" BorderThickness="0" Margin="0,0,4,0" Cursor="Hand" />
+                                                    <Button Click="BtnEditSingle_Click" Tag="{Binding Addr}" Content="✏" ToolTip="Edit resolver" Width="26" Height="26" Background="#1E293B" Foreground="#F59E0B" BorderThickness="0" Margin="0,0,4,0" Cursor="Hand" />
+                                                    <Button Click="BtnDeleteSingle_Click" Tag="{Binding Addr}" Content="✕" ToolTip="Delete resolver" Width="26" Height="26" Background="#1E293B" Foreground="#EF4444" BorderThickness="0" Cursor="Hand" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
                             </ListView>
+
+                            <!-- Row 4: Raw Editor Panel (Collapsible) -->
+                            <Grid x:Name="PnlRawEditor" Grid.Row="4" Margin="0,8,0,0" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="120" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Text="RAW CANDIDATE RESOLVERS TEXT FILE" FontWeight="SemiBold" Foreground="#F59E0B" FontSize="10.5" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtResolversFile" Grid.Row="1" Text="client_resolvers.txt" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,0,0,6" ToolTip="Candidate resolver IPs (one per line)" />
+                                <Button x:Name="BtnSaveRawResolvers" Grid.Row="2" Click="BtnSaveRawResolvers_Click" Height="26" Background="#0284C7" Foreground="#FFFFFF" BorderThickness="0" FontWeight="SemiBold" FontSize="11" Content="Save &amp; Apply Changes" HorizontalAlignment="Right" Padding="12,2" Cursor="Hand" />
+                            </Grid>
                         </Grid>
                     </TabItem>
 

@@ -18,6 +18,7 @@ class SoarService : Service() {
         const val EXTRA_DOMAINS = "domains"
         const val EXTRA_PORT = "port"
         const val EXTRA_RESOLVERS = "resolvers"
+        const val EXTRA_LOCKED = "is_locked"
     }
 
     override fun onCreate() {
@@ -39,11 +40,12 @@ class SoarService : Service() {
         val domains = intent?.getStringExtra(EXTRA_DOMAINS) ?: ""
         val port = intent?.getIntExtra(EXTRA_PORT, 10850) ?: 10850
         val resolvers = intent?.getStringExtra(EXTRA_RESOLVERS) ?: ""
+        val isLocked = intent?.getBooleanExtra(EXTRA_LOCKED, false) ?: false
 
         val notification = buildNotification(port)
         startForeground(NOTIFICATION_ID, notification)
 
-        TunnelProcessManager.start(this, key, domains, port, resolvers)
+        TunnelProcessManager.start(this, key, domains, port, resolvers, isLocked)
 
         return START_STICKY
     }

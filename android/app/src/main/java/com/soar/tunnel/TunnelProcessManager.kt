@@ -26,7 +26,8 @@ object TunnelProcessManager {
         serverKey: String,
         domains: String,
         port: Int,
-        resolvers: String
+        resolvers: String,
+        isLocked: Boolean = false
     ): Boolean {
         if (isRunning) return true
 
@@ -68,6 +69,7 @@ object TunnelProcessManager {
             STREAM_IDLE_TIMEOUT_SECONDS = 60.0
             LOG_LEVEL = "INFO"
             COUNTRY = "IR"
+            REDACT = ${if (isLocked) "true" else "false"}
         """.trimIndent()
         configFile.writeText(tomlContent)
 
@@ -86,7 +88,7 @@ object TunnelProcessManager {
 
         log("[START] Launching Soar tunnel process...")
         try {
-            val pb = ProcessBuilder(
+            val cmdArgs = mutableListOf(
                 binaryFile.absolutePath,
                 "-config", configFile.absolutePath,
                 "-zones", domains.trim(),
@@ -94,6 +96,10 @@ object TunnelProcessManager {
                 "-resolvers", resolversFile.absolutePath,
                 "-listen", "127.0.0.1:$port"
             )
+            if (isLocked) {
+                cmdArgs.add("-redact")
+            }
+            val pb = ProcessBuilder(cmdArgs)
             pb.directory(filesDir)
             pb.redirectErrorStream(true)
 

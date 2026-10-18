@@ -418,127 +418,288 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- Tab 2: Resolvers Management & File Import -->
-        <ScrollView
+        <!-- Tab 2: Resolvers Management & Live Bank (Inspired by TheFeed & MasterDnsVPN) -->
+        <LinearLayout
             android:id="@+id/layoutTabResolvers"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fillViewport="true"
+            android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- Search Bar & Summary Row -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
 
-                <!-- Resolvers Actions Bar Row 1 -->
-                <LinearLayout
-                    android:layout_width="match_parent"
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="6dp">
+                    android:layout_weight="1"
+                    android:hint="🔍 Search Resolvers..."
+                    android:textColorHint="@color/text_muted"
+                    app:boxStrokeColor="@color/primary_accent"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnImportResolversFile"
-                        android:layout_width="0dp"
-                        android:layout_height="38dp"
-                        android:layout_weight="1"
-                        android:text="📂 Import .txt"
-                        android:textSize="11sp"
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etResolverSearch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_light"
+                        android:textSize="12sp"
+                        android:singleLine="true" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <TextView
+                    android:id="@+id/tvResolverSummary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0 Resolvers"
+                    android:textSize="10.5sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/terminal_cyan"
+                    android:background="#162234"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="8dp"
+                    android:layout_marginStart="8dp" />
+            </LinearLayout>
+
+            <!-- Filter Pills / Categories ScrollView -->
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none"
+                android:layout_marginBottom="8dp">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnFilterAll"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="All"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
                         android:textColor="#FFFFFF"
-                        app:backgroundTint="@color/primary_accent"
-                        app:cornerRadius="8dp"
+                        android:background="@drawable/bg_chip_selected"
+                        android:paddingHorizontal="10dp"
                         android:layout_marginEnd="6dp" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnTestResolvers"
-                        android:layout_width="0dp"
-                        android:layout_height="38dp"
-                        android:layout_weight="1"
-                        android:text="⚡ Test Latency"
-                        android:textSize="11sp"
-                        android:textColor="@color/primary_accent"
-                        app:backgroundTint="@color/surface_dark"
-                        app:strokeColor="@color/border_dark"
-                        app:strokeWidth="1dp"
-                        app:cornerRadius="8dp" />
-                </LinearLayout>
+                    <Button
+                        android:id="@+id/btnFilterHealthy"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Healthy"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_muted"
+                        android:background="@drawable/bg_chip_unselected"
+                        android:paddingHorizontal="10dp"
+                        android:layout_marginEnd="6dp" />
 
-                <!-- Resolvers Actions Bar Row 2 (Clear & Reset) -->
+                    <Button
+                        android:id="@+id/btnFilterFast"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Fast (&lt;120ms)"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_muted"
+                        android:background="@drawable/bg_chip_unselected"
+                        android:paddingHorizontal="10dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <Button
+                        android:id="@+id/btnFilterIran"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Iran 🇮🇷"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_muted"
+                        android:background="@drawable/bg_chip_unselected"
+                        android:paddingHorizontal="10dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <Button
+                        android:id="@+id/btnFilterGlobal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Global 🌐"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_muted"
+                        android:background="@drawable/bg_chip_unselected"
+                        android:paddingHorizontal="10dp" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <!-- Action Toolbar (Add, Import, Test All, Prune, Raw) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddResolver"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="+ Add"
+                    android:textSize="10sp"
+                    android:textColor="#FFFFFF"
+                    app:backgroundTint="@color/primary_accent"
+                    app:cornerRadius="6dp"
+                    android:paddingHorizontal="4dp"
+                    android:layout_marginEnd="4dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnImportResolversFile"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="📂 Import"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_light"
+                    app:backgroundTint="@color/surface_dark"
+                    app:strokeColor="@color/border_dark"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="6dp"
+                    android:paddingHorizontal="4dp"
+                    android:layout_marginEnd="4dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTestResolvers"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1.2"
+                    android:text="⚡ Test All"
+                    android:textSize="10sp"
+                    android:textColor="@color/primary_accent"
+                    app:backgroundTint="@color/surface_dark"
+                    app:strokeColor="@color/border_dark"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="6dp"
+                    android:paddingHorizontal="4dp"
+                    android:layout_marginEnd="4dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPruneDead"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:text="🧹 Prune"
+                    android:textSize="10sp"
+                    android:textColor="@color/status_red"
+                    app:backgroundTint="@color/surface_dark"
+                    app:strokeColor="@color/border_dark"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="6dp"
+                    android:paddingHorizontal="4dp"
+                    android:layout_marginEnd="4dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnToggleRaw"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="0.9"
+                    android:text="📝 Raw"
+                    android:textSize="10sp"
+                    android:textColor="@color/status_amber"
+                    app:backgroundTint="@color/surface_dark"
+                    app:strokeColor="@color/border_dark"
+                    app:strokeWidth="1dp"
+                    app:cornerRadius="6dp"
+                    android:paddingHorizontal="4dp" />
+            </LinearLayout>
+
+            <!-- Card-based List / RecyclerView -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvResolvers"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:scrollbars="vertical" />
+
+            <!-- Collapsible Raw Text Editor -->
+            <LinearLayout
+                android:id="@+id/layoutRawEditor"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:background="@color/surface_dark"
+                android:padding="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RAW CANDIDATE RESOLVERS"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/status_amber"
+                    android:layout_marginBottom="4dp" />
+
+                <EditText
+                    android:id="@+id/etResolvers"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="@null"
+                    android:textColor="@color/text_light"
+                    android:textSize="10.5sp"
+                    android:typeface="monospace"
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine"
+                    android:textColorHint="@color/text_muted" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginBottom="10dp">
+                    android:gravity="end"
+                    android:layout_marginTop="4dp">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnClearResolvers"
-                        android:layout_width="0dp"
-                        android:layout_height="36dp"
-                        android:layout_weight="1"
-                        android:text="🗑 Clear List"
-                        android:textSize="10.5sp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Clear"
+                        android:textSize="9.5sp"
                         android:textColor="@color/status_red"
-                        app:backgroundTint="@color/surface_dark"
-                        app:strokeColor="@color/border_dark"
-                        app:strokeWidth="1dp"
-                        app:cornerRadius="8dp"
+                        app:backgroundTint="@color/bg_dark"
+                        app:cornerRadius="6dp"
                         android:layout_marginEnd="6dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnResetDefaultResolvers"
-                        android:layout_width="0dp"
-                        android:layout_height="36dp"
-                        android:layout_weight="1"
-                        android:text="🔄 Reset Defaults"
-                        android:textSize="10.5sp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Reset Defaults"
+                        android:textSize="9.5sp"
                         android:textColor="@color/text_muted"
-                        app:backgroundTint="@color/surface_dark"
-                        app:strokeColor="@color/border_dark"
-                        app:strokeWidth="1dp"
-                        app:cornerRadius="8dp" />
+                        app:backgroundTint="@color/bg_dark"
+                        app:cornerRadius="6dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSaveRawResolvers"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:text="Save &amp; Apply"
+                        android:textSize="9.5sp"
+                        android:textColor="#FFFFFF"
+                        app:backgroundTint="@color/primary_accent"
+                        app:cornerRadius="6dp" />
                 </LinearLayout>
-
-                <!-- Candidate Resolvers Text Area -->
-                <com.google.android.material.card.MaterialCardView
-                    android:layout_width="match_parent"
-                    android:layout_height="320dp"
-                    app:cardBackgroundColor="@color/surface_dark"
-                    app:strokeColor="@color/border_dark"
-                    app:strokeWidth="1dp"
-                    app:cardCornerRadius="8dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:orientation="vertical"
-                        android:padding="10dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="CANDIDATE DNS RESOLVERS"
-                            android:textSize="10sp"
-                            android:textStyle="bold"
-                            android:textColor="@color/primary_accent"
-                            android:layout_marginBottom="6dp" />
-
-                        <EditText
-                            android:id="@+id/etResolvers"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:background="@null"
-                            android:textColor="@color/text_light"
-                            android:textSize="11sp"
-                            android:typeface="monospace"
-                            android:gravity="top|start"
-                            android:inputType="textMultiLine"
-                            android:hint="Paste or import DNS resolver IPs (one per line or IP:port)..."
-                            android:textColorHint="@color/text_muted" />
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
-        </ScrollView>
+        </LinearLayout>
 
         <!-- Tab 3: Config & Live Logs -->
         <ScrollView

@@ -19,7 +19,7 @@ namespace SoarClient
 {
     public partial class MainWindow : Window
     {
-        private const string CurrentVersion = "v1.3.0";
+        private const string CurrentVersion = "v1.4.0";
         private const string GitHubRepo = "mahdigholamipak/soar-tunnel";
 
         private Process? _tunnelProcess;
@@ -27,6 +27,10 @@ namespace SoarClient
         private string _configPath = "client_config.toml";
         private List<ServerProfile> _profiles = new();
         private ServerProfile? _activeProfile;
+
+        // Resolver Management & Filter
+        private List<ResolverBankItemViewModel> _allBankItems = new();
+        private string _currentResolverFilter = "All";
 
         // Resolver Scanner
         private System.Threading.CancellationTokenSource? _scanCts;
@@ -518,10 +522,11 @@ namespace SoarClient
 
             try
             {
+                var redactArg = _activeProfile.IsLocked ? " -redact" : "";
                 var psi = new ProcessStartInfo
                 {
                     FileName = exePath,
-                    Arguments = $"-config \"{targetPath}\"",
+                    Arguments = $"-config \"{targetPath}\"{redactArg}",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -699,6 +704,50 @@ namespace SoarClient
                 }
                 catch { }
                 return;
+            }
+
+            if (line.StartsWith("[TUNER]"))
+            {
+                try
+                {
+                    var parts = line.Substring("[TUNER]".Length).Trim().Split(' ');
+                    var dict = new Dictionary<string, string>();
+                    foreach (var part in parts)
+                    {
+                        var kv = part.Split('=');
+                        if (kv.Length == 2) dict[kv[0]] = kv[1];
+                    }
+                    var mode = dict.GetValueOrDefault("mode", "balanced").ToUpper();
+                    var rtt = dict.GetValueOrDefault("rtt_ewma", "0ms");
+                    var timeout = dict.GetValueOrDefault("dial_timeout", "3.0s");
+                    var loss = dict.GetValueOrDefault("loss", "0.0%");
+                    var fec = dict.GetValueOrDefault("fec", "1:6");
+
+                    if (TxtTunerStatus != null)
+                    {
+                        TxtTunerStatus.Text = $"⚡ Posture: {mode} (RTT: {rtt}, Loss: {loss}, FEC: {fec}, Timeout: {timeout})";
+                    }
+                    if (TxtHeroTuner != null)
+                    {
+                        TxtHeroTuner.Text = $"⚡ Auto-Tuner: {mode} ({rtt})";
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            if (_activeProfile != null && _activeProfile.IsLocked)
+            {
+                for (int i = 0; i < _activeProfile.Domains.Count; i++)
+                {
+                    var d = _activeProfile.Domains[i];
+                    if (!string.IsNullOrWhiteSpace(d))
+                        line = line.Replace(d, $"[protected-domain-{i + 1}]");
+                }
+                if (!string.IsNullOrWhiteSpace(_activeProfile.ServerPublicKey))
+                {
+                    line = line.Replace(_activeProfile.ServerPublicKey, "[protected-key]");
+                }
             }
 
             AppendLog(line);
@@ -883,125 +932,575 @@ namespace SoarClient
             LoadResolverBank();
         }
 
+        private void TxtResolverSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            ApplyResolversFilter();
+        }
+
+        private void BtnFilterAll_Click(object sender, RoutedEventArgs e)
+        {
+            _currentResolverFilter = "All";
+            UpdateFilterButtonStyles();
+            ApplyResolversFilter();
+        }
+
+        private void BtnFilterHealthy_Click(object sender, RoutedEventArgs e)
+        {
+            _currentResolverFilter = "Healthy";
+            UpdateFilterButtonStyles();
+            ApplyResolversFilter();
+        }
+
+        private void BtnFilterFast_Click(object sender, RoutedEventArgs e)
+        {
+            _currentResolverFilter = "Fast";
+            UpdateFilterButtonStyles();
+            ApplyResolversFilter();
+        }
+
+        private void BtnFilterIran_Click(object sender, RoutedEventArgs e)
+        {
+            _currentResolverFilter = "Iran";
+            UpdateFilterButtonStyles();
+            ApplyResolversFilter();
+        }
+
+        private void BtnFilterGlobal_Click(object sender, RoutedEventArgs e)
+        {
+            _currentResolverFilter = "Global";
+            UpdateFilterButtonStyles();
+            ApplyResolversFilter();
+        }
+
+        private void UpdateFilterButtonStyles()
+        {
+            var activeBg = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0284C7"));
+            var activeFg = Brushes.White;
+            var inactiveBg = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B"));
+
+            BtnFilterAll.Background = _currentResolverFilter == "All" ? activeBg : inactiveBg;
+            BtnFilterAll.Foreground = _currentResolverFilter == "All" ? activeFg : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+
+            BtnFilterHealthy.Background = _currentResolverFilter == "Healthy" ? activeBg : inactiveBg;
+            BtnFilterHealthy.Foreground = _currentResolverFilter == "Healthy" ? activeFg : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#10B981"));
+
+            BtnFilterFast.Background = _currentResolverFilter == "Fast" ? activeBg : inactiveBg;
+            BtnFilterFast.Foreground = _currentResolverFilter == "Fast" ? activeFg : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
+
+            BtnFilterIran.Background = _currentResolverFilter == "Iran" ? activeBg : inactiveBg;
+            BtnFilterIran.Foreground = _currentResolverFilter == "Iran" ? activeFg : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#C084FC"));
+
+            BtnFilterGlobal.Background = _currentResolverFilter == "Global" ? activeBg : inactiveBg;
+            BtnFilterGlobal.Foreground = _currentResolverFilter == "Global" ? activeFg : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+        }
+
         private void LoadResolverBank()
         {
             try
             {
                 var appDir = AppContext.BaseDirectory;
+                var resFileName = string.IsNullOrWhiteSpace(TxtResolversFile?.Text) ? "client_resolvers.txt" : TxtResolversFile.Text.Trim();
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(candidatePath))
+                {
+                    foreach (var line in File.ReadAllLines(candidatePath))
+                    {
+                        var trimmed = line.Trim();
+                        if (!string.IsNullOrEmpty(trimmed) && !trimmed.StartsWith("#") && !trimmed.StartsWith(";"))
+                        {
+                            if (!trimmed.Contains(":")) trimmed += ":53";
+                            candidates.Add(trimmed);
+                        }
+                    }
+                }
+
                 var bankPath = Path.Combine(appDir, "resolvers_bank.json");
-                if (!File.Exists(bankPath))
+                var entries = new Dictionary<string, BankEntryItem>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(bankPath))
                 {
-                    TxtBankCount.Text = "0 cached (Bank starts automatically on connect)";
-                    LvResolverBank.ItemsSource = null;
-                    return;
+                    var json = File.ReadAllText(bankPath);
+                    var deserialized = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                    if (deserialized != null)
+                    {
+                        foreach (var kv in deserialized) entries[kv.Key] = kv.Value;
+                    }
                 }
 
-                var json = File.ReadAllText(bankPath);
-                var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json, new JsonSerializerOptions
+                var mergedList = new List<ResolverBankItemViewModel>();
+                foreach (var c in candidates)
                 {
-                    PropertyNameCaseInsensitive = true
-                });
-
-                if (entries == null || entries.Count == 0)
-                {
-                    TxtBankCount.Text = "0 cached";
-                    LvResolverBank.ItemsSource = null;
-                    return;
+                    if (entries.TryGetValue(c, out var b))
+                    {
+                        mergedList.Add(new ResolverBankItemViewModel
+                        {
+                            Addr = b.Addr,
+                            RttMs = b.RttMs,
+                            Score = b.Score,
+                            SuccessCount = b.SuccessCount,
+                            FailCount = b.FailCount,
+                            MaxEDNS0 = b.MaxEDNS0,
+                            LastVerified = b.LastVerified
+                        });
+                    }
+                    else
+                    {
+                        mergedList.Add(new ResolverBankItemViewModel
+                        {
+                            Addr = c,
+                            RttMs = 0,
+                            Score = 0,
+                            SuccessCount = 0,
+                            FailCount = 0,
+                            MaxEDNS0 = 1232,
+                            LastVerified = DateTime.MinValue
+                        });
+                    }
                 }
 
-                var list = entries.Values.Select(v => new ResolverBankItemViewModel
+                foreach (var kv in entries)
                 {
-                    Addr = v.Addr,
-                    RttMs = v.RttMs,
-                    Score = v.Score,
-                    SuccessCount = v.SuccessCount,
-                    FailCount = v.FailCount,
-                    MaxEDNS0 = v.MaxEDNS0,
-                    LastVerified = v.LastVerified
-                }).OrderByDescending(x => x.Score).ToList();
+                    if (!candidates.Contains(kv.Key))
+                    {
+                        mergedList.Add(new ResolverBankItemViewModel
+                        {
+                            Addr = kv.Value.Addr,
+                            RttMs = kv.Value.RttMs,
+                            Score = kv.Value.Score,
+                            SuccessCount = kv.Value.SuccessCount,
+                            FailCount = kv.Value.FailCount,
+                            MaxEDNS0 = kv.Value.MaxEDNS0,
+                            LastVerified = kv.Value.LastVerified
+                        });
+                    }
+                }
 
-                LvResolverBank.ItemsSource = list;
-                TxtBankCount.Text = $"{list.Count} cached in bank (Ranked by EWMA score)";
-                AppendLog($"[BANK] Loaded {list.Count} persistent resolver metrics from bank cache.");
+                _allBankItems = mergedList;
+                ApplyResolversFilter();
+                AppendLog($"[BANK] Loaded {_allBankItems.Count} resolvers ({entries.Count} cached in bank).");
             }
             catch (Exception ex)
             {
-                AppendLog($"[BANK] Error reading resolvers_bank.json: {ex.Message}");
+                AppendLog($"[BANK] Error loading resolvers: {ex.Message}");
             }
         }
 
-        private void BtnDeleteBankEntry_Click(object sender, RoutedEventArgs e)
+        private void ApplyResolversFilter()
         {
-            DeleteSelectedBankEntry();
+            if (_allBankItems == null) return;
+
+            var q = TxtResolverSearch?.Text?.Trim() ?? "";
+            var filtered = _allBankItems.AsEnumerable();
+
+            if (!string.IsNullOrEmpty(q))
+            {
+                filtered = filtered.Where(x => x.Addr.Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+
+            switch (_currentResolverFilter)
+            {
+                case "Healthy":
+                    filtered = filtered.Where(x => x.Score >= 0.25 || (x.RttMs > 0 && x.RttMs < 1200 && x.FailCount < 3));
+                    break;
+                case "Fast":
+                    filtered = filtered.Where(x => x.RttMs > 0 && x.RttMs < 100);
+                    break;
+                case "Iran":
+                    filtered = filtered.Where(x => x.IsIran);
+                    break;
+                case "Global":
+                    filtered = filtered.Where(x => !x.IsIran);
+                    break;
+            }
+
+            var sorted = filtered.OrderByDescending(x => x.Score > 0)
+                                 .ThenByDescending(x => x.Score)
+                                 .ThenBy(x => x.RttMs > 0 ? x.RttMs : 99999)
+                                 .ToList();
+
+            LvResolverBank.ItemsSource = sorted;
+
+            int healthyCount = _allBankItems.Count(x => x.RttMs > 0 && x.RttMs < 1200 && x.FailCount < 3);
+            int iranCount = _allBankItems.Count(x => x.IsIran);
+            int globalCount = _allBankItems.Count - iranCount;
+
+            TxtBankCount.Text = $"{sorted.Count} of {_allBankItems.Count} Resolvers ({healthyCount} Healthy, {iranCount} Iran, {globalCount} Global)";
+            BtnFilterAll.Content = $"All ({_allBankItems.Count})";
+        }
+
+        private void BtnToggleRawEditor_Click(object sender, RoutedEventArgs e)
+        {
+            if (PnlRawEditor.Visibility == Visibility.Visible)
+            {
+                PnlRawEditor.Visibility = Visibility.Collapsed;
+                BtnToggleRawEditor.Content = "📝 Raw Editor";
+            }
+            else
+            {
+                PnlRawEditor.Visibility = Visibility.Visible;
+                BtnToggleRawEditor.Content = "✕ Close Editor";
+                try
+                {
+                    var appDir = AppContext.BaseDirectory;
+                    var resFileName = string.IsNullOrWhiteSpace(TxtResolversFile?.Text) ? "client_resolvers.txt" : TxtResolversFile.Text.Trim();
+                    var candidatePath = Path.Combine(appDir, resFileName);
+                    if (File.Exists(candidatePath))
+                    {
+                        TxtResolversFile.Text = File.ReadAllText(candidatePath);
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void BtnSaveRawResolvers_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var resFileName = "client_resolvers.txt";
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                var lines = TxtResolversFile.Text.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#") && !l.StartsWith(";"))
+                    .Distinct()
+                    .ToList();
+
+                File.WriteAllLines(candidatePath, lines);
+                AppendLog($"[RESOLVER] Saved {lines.Count} resolvers to {resFileName}.");
+                LoadResolverBank();
+                PnlRawEditor.Visibility = Visibility.Collapsed;
+                BtnToggleRawEditor.Content = "📝 Raw Editor";
+                MessageBox.Show($"Successfully saved {lines.Count} resolvers to {resFileName}!", "Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to save: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnAddResolver_Click(object sender, RoutedEventArgs e)
+        {
+            var input = PromptInput("Add Resolver", "Enter DNS resolver IP address (e.g. 1.1.1.1:53):");
+            if (string.IsNullOrWhiteSpace(input)) return;
+
+            input = input.Trim();
+            if (!input.Contains(":")) input += ":53";
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var resFileName = "client_resolvers.txt";
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                var lines = File.Exists(candidatePath) ? File.ReadAllLines(candidatePath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l)).ToList() : new List<string>();
+                if (!lines.Contains(input, StringComparer.OrdinalIgnoreCase))
+                {
+                    lines.Add(input);
+                    File.WriteAllLines(candidatePath, lines);
+                    AppendLog($"[RESOLVER] Added resolver {input} to {resFileName}.");
+                }
+                LoadResolverBank();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to add resolver: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnEditSingle_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string oldAddr) return;
+
+            var newAddr = PromptInput("Edit Resolver", "Modify resolver IP address and port:", oldAddr);
+            if (string.IsNullOrWhiteSpace(newAddr) || newAddr == oldAddr) return;
+
+            newAddr = newAddr.Trim();
+            if (!newAddr.Contains(":")) newAddr += ":53";
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var resFileName = "client_resolvers.txt";
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                if (File.Exists(candidatePath))
+                {
+                    var lines = File.ReadAllLines(candidatePath).Select(l => l.Trim()).ToList();
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        if (lines[i].Equals(oldAddr, StringComparison.OrdinalIgnoreCase))
+                        {
+                            lines[i] = newAddr;
+                        }
+                    }
+                    File.WriteAllLines(candidatePath, lines);
+                }
+
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (File.Exists(bankPath))
+                {
+                    var json = File.ReadAllText(bankPath);
+                    var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json) ?? new();
+                    if (entries.Remove(oldAddr, out var oldEntry))
+                    {
+                        oldEntry.Addr = newAddr;
+                        entries[newAddr] = oldEntry;
+                        File.WriteAllText(bankPath, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+                    }
+                }
+
+                AppendLog($"[RESOLVER] Updated resolver '{oldAddr}' -> '{newAddr}'.");
+                LoadResolverBank();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to edit resolver: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnDeleteSingle_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string addr) return;
+
+            var res = MessageBox.Show($"Are you sure you want to delete resolver '{addr}'?", "Delete Resolver", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (res != MessageBoxResult.Yes) return;
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var resFileName = "client_resolvers.txt";
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                if (File.Exists(candidatePath))
+                {
+                    var lines = File.ReadAllLines(candidatePath).Select(l => l.Trim()).Where(l => !l.Equals(addr, StringComparison.OrdinalIgnoreCase)).ToList();
+                    File.WriteAllLines(candidatePath, lines);
+                }
+
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (File.Exists(bankPath))
+                {
+                    var json = File.ReadAllText(bankPath);
+                    var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json) ?? new();
+                    if (entries.Remove(addr))
+                    {
+                        File.WriteAllText(bankPath, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+                    }
+                }
+
+                AppendLog($"[RESOLVER] Deleted resolver '{addr}'.");
+                LoadResolverBank();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to delete resolver: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void BtnTestSingle_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string addr) return;
+            btn.IsEnabled = false;
+
+            try
+            {
+                var host = addr;
+                var port = 53;
+                if (addr.Contains(":"))
+                {
+                    var parts = addr.Split(':');
+                    host = parts[0];
+                    int.TryParse(parts[1], out port);
+                }
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                using var udp = new System.Net.Sockets.UdpClient();
+                udp.Client.ReceiveTimeout = 2000;
+                udp.Client.SendTimeout = 2000;
+                var probeDomain = _activeProfile?.Domains?.FirstOrDefault() ?? "google.com";
+                var q = BuildDnsQuery(probeDomain);
+                await udp.SendAsync(q, q.Length, host, port);
+
+                var receiveTask = udp.ReceiveAsync();
+                if (await Task.WhenAny(receiveTask, Task.Delay(2000)) == receiveTask)
+                {
+                    sw.Stop();
+                    var rtt = sw.ElapsedMilliseconds;
+                    AppendLog($"[RESOLVER] {addr} -> {rtt} ms (OK)");
+                    UpdateResolverBankMetric(addr, rtt, true);
+                }
+                else
+                {
+                    AppendLog($"[RESOLVER] {addr} -> Timeout (Failed)");
+                    UpdateResolverBankMetric(addr, 2000, false);
+                }
+                LoadResolverBank();
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[RESOLVER] Test {addr} error: {ex.Message}");
+            }
+            finally
+            {
+                btn.IsEnabled = true;
+            }
+        }
+
+        private void UpdateResolverBankMetric(string addr, double rttMs, bool success)
+        {
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                var entries = new Dictionary<string, BankEntryItem>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(bankPath))
+                {
+                    var json = File.ReadAllText(bankPath);
+                    var d = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json);
+                    if (d != null) foreach (var kv in d) entries[kv.Key] = kv.Value;
+                }
+
+                if (!entries.TryGetValue(addr, out var item))
+                {
+                    item = new BankEntryItem
+                    {
+                        Addr = addr,
+                        RttMs = rttMs,
+                        LastVerified = DateTime.UtcNow,
+                        MaxEDNS0 = 1400
+                    };
+                    entries[addr] = item;
+                }
+
+                if (success)
+                {
+                    item.SuccessCount++;
+                    item.RttMs = item.RttMs > 0 ? (0.8 * item.RttMs + 0.2 * rttMs) : rttMs;
+                }
+                else
+                {
+                    item.FailCount++;
+                }
+
+                double rel = (item.SuccessCount + 1.0) / (item.SuccessCount + 2.0 * item.FailCount + 1.0);
+                double lat = 1000.0 / (item.RttMs + 60.0);
+                item.Score = rel * lat;
+                item.LastVerified = DateTime.UtcNow;
+
+                File.WriteAllText(bankPath, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch { }
+        }
+
+        private void BtnPruneDead_Click(object sender, RoutedEventArgs e)
+        {
+            var dead = _allBankItems.Where(x => x.FailCount >= 3 && x.SuccessCount == 0).ToList();
+            if (dead.Count == 0)
+            {
+                MessageBox.Show("No dead or completely unresponsive resolvers found to prune.", "Prune Resolvers", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var res = MessageBox.Show($"Found {dead.Count} dead resolvers (3+ consecutive failures, 0 successes).\n\nDo you want to remove them from your active candidate list and bank?", "Prune Dead Resolvers", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (res != MessageBoxResult.Yes) return;
+
+            try
+            {
+                var appDir = AppContext.BaseDirectory;
+                var resFileName = "client_resolvers.txt";
+                var candidatePath = Path.Combine(appDir, resFileName);
+
+                var deadSet = new HashSet<string>(dead.Select(d => d.Addr), StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(candidatePath))
+                {
+                    var lines = File.ReadAllLines(candidatePath).Select(l => l.Trim()).Where(l => !deadSet.Contains(l)).ToList();
+                    File.WriteAllLines(candidatePath, lines);
+                }
+
+                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
+                if (File.Exists(bankPath))
+                {
+                    var json = File.ReadAllText(bankPath);
+                    var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json) ?? new();
+                    foreach (var d in deadSet) entries.Remove(d);
+                    File.WriteAllText(bankPath, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+                }
+
+                AppendLog($"[BANK] Pruned {dead.Count} dead resolvers.");
+                LoadResolverBank();
+                MessageBox.Show($"Pruned {dead.Count} dead resolvers successfully!", "Pruned", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to prune dead resolvers: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnExportResolvers_Click(object sender, RoutedEventArgs e)
+        {
+            var items = LvResolverBank.ItemsSource as IEnumerable<ResolverBankItemViewModel> ?? _allBankItems;
+            var list = items.Select(x => x.Addr).ToList();
+            if (list.Count == 0)
+            {
+                MessageBox.Show("No resolvers to export.", "Export Resolvers", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            Clipboard.SetText(string.Join(Environment.NewLine, list));
+            AppendLog($"[RESOLVER] Exported {list.Count} resolvers to clipboard.");
+            MessageBox.Show($"Copied {list.Count} resolver addresses to clipboard!", "Export Successful", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private string? PromptInput(string title, string message, string defaultValue = "")
+        {
+            var win = new Window
+            {
+                Title = title,
+                Width = 380,
+                Height = 170,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F141C")),
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F1F5F9")),
+                ResizeMode = ResizeMode.NoResize
+            };
+            var panel = new StackPanel { Margin = new Thickness(16) };
+            panel.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8")), Margin = new Thickness(0, 0, 0, 8) });
+            var txt = new TextBox { Text = defaultValue, Height = 28, Padding = new Thickness(6, 2), Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#161D28")), Foreground = Brushes.White, BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#263346")), Margin = new Thickness(0, 0, 0, 14) };
+            panel.Children.Add(txt);
+            var btnGrid = new Grid();
+            btnGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            btnGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
+            btnGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var btnOk = new Button { Content = "OK", Height = 28, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0284C7")), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+            var btnCancel = new Button { Content = "Cancel", Height = 28, Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B")), Foreground = Brushes.White, BorderThickness = new Thickness(0) };
+            Grid.SetColumn(btnOk, 0);
+            Grid.SetColumn(btnCancel, 2);
+            btnGrid.Children.Add(btnOk);
+            btnGrid.Children.Add(btnCancel);
+            panel.Children.Add(btnGrid);
+            win.Content = panel;
+            bool confirmed = false;
+            btnOk.Click += (s, e) => { confirmed = true; win.Close(); };
+            btnCancel.Click += (s, e) => { win.Close(); };
+            win.ShowDialog();
+            return confirmed ? txt.Text.Trim() : null;
         }
 
         private void LvResolverBank_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Delete)
             {
-                DeleteSelectedBankEntry();
-            }
-        }
-
-        private void DeleteSelectedBankEntry()
-        {
-            if (LvResolverBank.SelectedItem is not ResolverBankItemViewModel selected)
-            {
-                MessageBox.Show("Please select a resolver in the bank to delete.", "Delete Resolver", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var res = MessageBox.Show($"Are you sure you want to delete resolver '{selected.Addr}' from the persistent bank?", "Delete Resolver", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (res != MessageBoxResult.Yes) return;
-
-            try
-            {
-                var appDir = AppContext.BaseDirectory;
-                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
-                if (File.Exists(bankPath))
+                if (LvResolverBank.SelectedItem is ResolverBankItemViewModel selected)
                 {
-                    var json = File.ReadAllText(bankPath);
-                    var entries = JsonSerializer.Deserialize<Dictionary<string, BankEntryItem>>(json, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    }) ?? new();
-
-                    if (entries.Remove(selected.Addr))
-                    {
-                        var updatedJson = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
-                        File.WriteAllText(bankPath, updatedJson);
-                        AppendLog($"[BANK] Deleted resolver {selected.Addr} from persistent bank cache.");
-                        LoadResolverBank();
-                    }
+                    BtnDeleteSingle_Click(new Button { Tag = selected.Addr }, new RoutedEventArgs());
                 }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to delete bank entry: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        private void BtnClearBank_Click(object sender, RoutedEventArgs e)
-        {
-            var res = MessageBox.Show("Are you sure you want to clear the entire persistent resolver bank?\n\nAll cached latency scores and history will be reset.", "Clear Resolver Bank", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (res != MessageBoxResult.Yes) return;
-
-            try
-            {
-                var appDir = AppContext.BaseDirectory;
-                var bankPath = Path.Combine(appDir, "resolvers_bank.json");
-                if (File.Exists(bankPath))
-                {
-                    File.Delete(bankPath);
-                }
-                LvResolverBank.ItemsSource = null;
-                TxtBankCount.Text = "0 cached (Bank cleared)";
-                AppendLog("[BANK] Cleared all persistent resolver bank entries.");
-                MessageBox.Show("Resolver bank cleared successfully.", "Bank Cleared", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to clear bank: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -1310,6 +1809,20 @@ namespace SoarClient
         {
             if (RtbConsoleLog == null) return;
 
+            if (_activeProfile != null && _activeProfile.IsLocked)
+            {
+                for (int i = 0; i < _activeProfile.Domains.Count; i++)
+                {
+                    var d = _activeProfile.Domains[i];
+                    if (!string.IsNullOrWhiteSpace(d))
+                        message = message.Replace(d, $"[protected-domain-{i + 1}]");
+                }
+                if (!string.IsNullOrWhiteSpace(_activeProfile.ServerPublicKey))
+                {
+                    message = message.Replace(_activeProfile.ServerPublicKey, "[protected-key]");
+                }
+            }
+
             if (!Dispatcher.CheckAccess())
             {
                 Dispatcher.BeginInvoke(new Action(() => AppendLog(message)));
@@ -1444,11 +1957,39 @@ namespace SoarClient
         public int MaxEDNS0 { get; set; }
         public DateTime LastVerified { get; set; }
 
-        public string RTTFormatted => $"{RttMs:F1} ms";
-        public string ScoreFormatted => $"{Score:F1}";
+        public bool IsIran
+        {
+            get
+            {
+                var ip = Addr.Split(':')[0];
+                var iranPrefixes = new[] { "178.22.", "185.51.", "10.", "78.157.", "217.218.", "85.15.", "185.212.", "46.100.", "5.202.", "93.114.", "2.188.", "87.107.", "91.92.", "81.29.", "188.136.", "185.83.", "94.182.", "178.252.", "85.185.", "79.127.", "80.191.", "31.214.", "2.144.", "194.225.", "94.183.", "5.160.", "5.161.", "188.121.", "188.253.", "151.232.", "151.247." };
+                return iranPrefixes.Any(p => ip.StartsWith(p));
+            }
+        }
+
+        public string RegionTag => IsIran ? "IRAN" : "GLOBAL";
+        public Brush RegionBadgeBackground => IsIran ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E3A8A")) : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#334155"));
+        public Brush RegionTagColor => IsIran ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA")) : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+
+        public Brush StatusBrush
+        {
+            get
+            {
+                if (SuccessCount == 0 && FailCount == 0) return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+                if (FailCount > 0 && SuccessCount == 0) return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
+                if (RttMs > 0 && RttMs < 100) return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#10B981"));
+                if (RttMs >= 100 && RttMs < 300) return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#06B6D4"));
+                if (RttMs >= 300) return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
+                return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+            }
+        }
+
+        public string RTTFormatted => SuccessCount == 0 && FailCount == 0 ? "UNTESTED" : $"{RttMs:F1} ms";
+        public string ScoreFormatted => $"Score: {Score:F1}";
         public string SuccessFailFormatted => $"{SuccessCount} / {FailCount}";
-        public string EDNSFormatted => MaxEDNS0 > 0 ? $"{MaxEDNS0} B" : "1232 B";
-        public string LastVerifiedFormatted => LastVerified.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        public string EDNSFormatted => MaxEDNS0 > 0 ? $"{MaxEDNS0} B" : "1400 B";
+        public string StatsSummary => $"Success: {SuccessCount} • Failures: {FailCount} • Last: {(LastVerified == DateTime.MinValue ? "Never" : LastVerified.ToLocalTime().ToString("HH:mm:ss"))}";
+        public string LastVerifiedFormatted => LastVerified == DateTime.MinValue ? "Never" : LastVerified.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     public class BankEntryItem

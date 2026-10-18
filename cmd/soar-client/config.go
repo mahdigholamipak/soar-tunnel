@@ -17,6 +17,8 @@ type ClientConfig struct {
 	DialTimeoutSeconds       float64
 	LogLevel                 string
 	Country                  string
+	Redact                   bool
+	Locked                   bool
 }
 
 func DefaultConfig() ClientConfig {
@@ -104,6 +106,9 @@ func LoadConfigFile(path string) (ClientConfig, error) {
 			cfg.LogLevel = strings.ToUpper(cleanString(val))
 		case "COUNTRY":
 			cfg.Country = strings.ToUpper(cleanString(val))
+		case "REDACT", "LOCKED", "PROTECTED":
+			cfg.Redact = (strings.ToLower(cleanString(val)) == "true" || cleanString(val) == "1")
+			cfg.Locked = cfg.Redact
 		}
 	}
 
